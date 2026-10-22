@@ -1,0 +1,16 @@
+# Exercício 7 — waypoint do namespace bookinfo, depois da migração para ambient.
+# Sem ele, VirtualServices/DestinationRules (L7) do bookinfo são ignorados.
+#   kubectl label ns bookinfo istio.io/use-waypoint=waypoint
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: bookinfo
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE

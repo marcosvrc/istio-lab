@@ -1,0 +1,21 @@
+# Exercício 3a — waypoint: um Envoy por namespace (ou por service account)
+# que processa L7 para os serviços que o usam. É um Gateway da Gateway API
+# com a classe istio-waypoint; o Istio cria o Deployment/Service sozinho.
+# Equivalente a: istioctl waypoint apply -n ambient
+#
+# Para os serviços do namespace usarem o waypoint:
+#   kubectl label ns ambient istio.io/use-waypoint=waypoint
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: ambient
+  labels:
+    # service = trata tráfego endereçado a Services (padrão)
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE

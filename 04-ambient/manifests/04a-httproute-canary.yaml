@@ -1,0 +1,31 @@
+# Exercício 4a — roteamento L7 entre serviços (padrão GAMMA da Gateway API):
+# a HTTPRoute tem como parentRef o próprio Service, não um Gateway.
+# Quem aplica as regras é o waypoint do namespace.
+#  - header x-version: v2 → sempre httpbin-v2
+#  - demais → canary 90/10
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin
+  namespace: ambient
+spec:
+  parentRefs:
+    - group: ""
+      kind: Service
+      name: httpbin
+      port: 8000
+  rules:
+    - matches:
+        - headers:
+            - name: x-version
+              value: v2
+      backendRefs:
+        - name: httpbin-v2
+          port: 8000
+    - backendRefs:
+        - name: httpbin
+          port: 8000
+          weight: 90
+        - name: httpbin-v2
+          port: 8000
+          weight: 10

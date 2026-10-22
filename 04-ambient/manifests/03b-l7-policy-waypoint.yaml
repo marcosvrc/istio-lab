@@ -1,0 +1,24 @@
+# Exercício 3b — autorização L7 aplicada pelo waypoint.
+# Diferença para o modo sidecar: em vez de "selector" (que mira pods e seria
+# avaliado pelo ztunnel), usa "targetRefs" apontando para o Service — a
+# política vai para o waypoint que atende esse Service.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-l7
+  namespace: ambient
+spec:
+  targetRefs:
+    - kind: Service
+      group: ""
+      name: httpbin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/ambient/sa/curl
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/get", "/headers"]

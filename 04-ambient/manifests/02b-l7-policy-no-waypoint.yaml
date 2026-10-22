@@ -1,0 +1,21 @@
+# Exercício 2b — o que acontece com uma regra L7 (paths/methods) sem waypoint?
+# O ztunnel não entende HTTP: ele não consegue avaliar "paths", então a regra
+# ALLOW nunca casa e o tráfego é negado. Erro clássico ao migrar para ambient.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-l4
+  namespace: ambient
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/ambient/sa/curl
+      to:
+        - operation:
+            paths: ["/get"]

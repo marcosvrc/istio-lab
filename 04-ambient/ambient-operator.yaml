@@ -1,0 +1,27 @@
+# Overlay que adiciona o modo ambient ao control plane do lab.
+#   istioctl install -y -f ../00-setup/istio-operator.yaml \
+#     -f ../01-traffic-management/manifests/12-egress-gateway-operator.yaml \
+#     -f ambient-operator.yaml
+#
+# O perfil "ambient" acrescenta istio-cni (redireciona o tráfego dos pods para
+# o ztunnel) e ztunnel (proxy L4 por nó, DaemonSet). Sidecars continuam
+# funcionando: os dois modos convivem na mesma mesh.
+# O ingress gateway segue habilitado porque está declarado na config base.
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: ambient
+  values:
+    global:
+      # Ajusta os caminhos de CNI do k3s (Rancher Desktop)
+      platform: k3s
+    cni:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 40Mi
+    ztunnel:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi

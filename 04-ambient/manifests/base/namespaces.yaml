@@ -1,0 +1,15 @@
+# ambient: workloads no modo ambient (sem sidecar; tráfego capturado pelo ztunnel)
+# outside: fora da mesh, para testar clientes sem identidade
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ambient
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: outside
+  labels:
+    istio-injection: disabled

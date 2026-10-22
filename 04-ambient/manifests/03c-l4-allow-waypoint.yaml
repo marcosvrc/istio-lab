@@ -1,0 +1,19 @@
+# Exercício 3c — defesa em profundidade: com waypoint, quem chega ao pod do
+# httpbin é o waypoint (identidade dele), não o cliente original. Esta
+# política L4 no ztunnel garante que NINGUÉM fure o waypoint chamando o pod
+# direto pelo IP.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-only-from-waypoint
+  namespace: ambient
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/ambient/sa/waypoint

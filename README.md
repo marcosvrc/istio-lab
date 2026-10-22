@@ -95,7 +95,7 @@ Prioridade: ⭐ essencial · ◆ importante · ○ avançado/opcional
 | [01-traffic-management](01-traffic-management/) | ✅ pronto |
 | [02-security](02-security/) | ✅ pronto |
 | [03-observability](03-observability/) | ✅ pronto |
-| 04-ambient | planejado |
+| [04-ambient](04-ambient/) | ✅ pronto |
 | 05-extensibility-ops | planejado |
 | 06-advanced | planejado |
 

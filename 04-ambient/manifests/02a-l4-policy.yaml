@@ -1,0 +1,18 @@
+# Exercício 2a — autorização L4, aplicada pelo ztunnel (sem waypoint).
+# Só a service account "curl" do namespace ambient pode abrir conexão com o
+# httpbin. Atributos L4: principals, namespaces, ipBlocks, ports.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-l4
+  namespace: ambient
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/ambient/sa/curl

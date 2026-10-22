@@ -1,0 +1,10 @@
+# Exercício 1 — mTLS STRICT no namespace ambient: o ztunnel passa a recusar
+# conexões em texto puro (de pods fora da mesh). Mesmo recurso do modo sidecar.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: ambient
+spec:
+  mtls:
+    mode: STRICT

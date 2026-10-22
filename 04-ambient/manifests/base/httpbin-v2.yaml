@@ -1,0 +1,49 @@
+# Segunda versão do httpbin no namespace ambient (canary e roteamento L7).
+# /hostname devolve o nome do pod (v1 responde "go-httpbin").
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: httpbin-v2
+  namespace: ambient
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin-v2
+  namespace: ambient
+  labels:
+    app: httpbin-v2
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+  selector:
+    app: httpbin-v2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin-v2
+  namespace: ambient
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbin-v2
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: httpbin-v2
+        version: v2
+    spec:
+      serviceAccountName: httpbin-v2
+      containers:
+        - name: httpbin
+          image: docker.io/mccutchen/go-httpbin:v2.15.0
+          env:
+            - name: USE_REAL_HOSTNAME
+              value: "true"
+          ports:
+            - containerPort: 8080

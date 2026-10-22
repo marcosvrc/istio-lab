@@ -1,0 +1,38 @@
+# Exercício 6 — ingress gateway (modo sidecar/gateway) → serviço ambient.
+# Host: ambient.local em http://localhost
+#
+# Por padrão o ingress gateway envia direto ao pod (via ztunnel) e PULA o
+# waypoint — políticas e rotas L7 do waypoint não se aplicariam. A label
+# istio.io/ingress-use-waypoint no Service faz o ingress passar pelo waypoint.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: ambient-gateway
+  namespace: ambient
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - ambient.local
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: ambient-ingress
+  namespace: ambient
+spec:
+  hosts:
+    - ambient.local
+  gateways:
+    - ambient-gateway
+  http:
+    - route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000

@@ -1,0 +1,28 @@
+# Exercício 4b — as APIs do Istio também funcionam com waypoint.
+# A Gateway API não tem fault injection; este VirtualService (aplicado pelo
+# waypoint) faz 30% das requisições ao httpbin-v2 falharem com 503 e corta
+# em 1s as que demorarem mais.
+# Obs.: o atraso de um fault.delay NÃO conta para o timeout da mesma rota (o
+# filtro de fault roda antes do router do Envoy). Por isso o timeout é testado
+# com o endpoint /delay/N do próprio httpbin.
+# Evite misturar HTTPRoute e VirtualService no MESMO serviço.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin-v2
+  namespace: ambient
+spec:
+  hosts:
+    - httpbin-v2
+  http:
+    - fault:
+        abort:
+          percentage:
+            value: 30
+          httpStatus: 503
+      timeout: 1s
+      route:
+        - destination:
+            host: httpbin-v2
+            port:
+              number: 8000
