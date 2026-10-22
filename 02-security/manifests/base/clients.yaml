@@ -1,0 +1,16 @@
+# Namespaces de clientes para os testes de segurança:
+#  - client: COM sidecar → identidade spiffe://cluster.local/ns/client/sa/curl
+#  - nomesh: SEM sidecar → sem identidade, sem mTLS (texto puro)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: client
+  labels:
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nomesh
+  labels:
+    istio-injection: disabled

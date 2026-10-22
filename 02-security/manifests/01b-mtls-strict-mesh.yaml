@@ -1,0 +1,10 @@
+# Exercício 1b — mTLS STRICT na mesh inteira: a política no namespace raiz
+# (istio-system) vale para todos os namespaces que não tiverem a sua própria.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT

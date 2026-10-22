@@ -1,0 +1,11 @@
+# Exercício 1a — mTLS obrigatório para os workloads do namespace sandbox.
+# PERMISSIVE (padrão) aceita mTLS e texto puro; STRICT só aceita mTLS.
+# Escopo: nome "default" sem selector = namespace inteiro.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: sandbox
+spec:
+  mtls:
+    mode: STRICT

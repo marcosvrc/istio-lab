@@ -1,0 +1,23 @@
+# Exercício 4b — exige um JWT válido para o host httpbin.local.
+# Usa DENY + notRequestPrincipals em vez de ALLOW: um ALLOW no gateway
+# negaria todo o resto que não casasse (ex.: o Bookinfo em localhost).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-require-jwt
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRequestPrincipals: ["*"]
+      to:
+        - operation:
+            hosts: ["httpbin.local", "httpbin.local:*"]
+            # portas do container do gateway (80→8080, 443→8443); sem isso o DENY
+            # com atributos HTTP também bloquearia portas TCP do gateway
+            ports: ["8080", "8443"]

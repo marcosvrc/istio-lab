@@ -1,0 +1,16 @@
+# Exercício 2c — DENY é avaliado antes de ALLOW: mesmo um cliente liberado
+# é bloqueado se enviar o header x-block: true.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-deny-blocked
+  namespace: sandbox
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: DENY
+  rules:
+    - when:
+        - key: request.headers[x-block]
+          values: ["true"]

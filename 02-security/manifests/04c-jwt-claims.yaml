@@ -1,0 +1,23 @@
+# Exercício 4c — autorização por claim: /status/* do httpbin.local exige
+# que o token tenha "group1" na claim groups.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-require-group1
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  action: DENY
+  rules:
+    - to:
+        - operation:
+            hosts: ["httpbin.local", "httpbin.local:*"]
+            # portas do container do gateway (80→8080, 443→8443); sem isso o DENY
+            # com atributos HTTP também bloquearia portas TCP do gateway
+            ports: ["8080", "8443"]
+            paths: ["/status/*"]
+      when:
+        - key: request.auth.claims[groups]
+          notValues: ["group1"]

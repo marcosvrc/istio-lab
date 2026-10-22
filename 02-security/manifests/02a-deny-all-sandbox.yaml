@@ -1,0 +1,9 @@
+# Exercício 2a — "allow nothing": ALLOW sem regras não casa com nada,
+# então toda requisição para o namespace sandbox é negada (403 RBAC).
+# Ponto de partida de uma política zero-trust.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-nothing
+  namespace: sandbox
+spec: {}

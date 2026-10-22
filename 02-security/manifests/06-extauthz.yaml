@@ -1,0 +1,20 @@
+# Exercício 6 — delega a decisão de autorização de /headers do httpbin a um
+# serviço externo (action CUSTOM). O ext-authz de exemplo só libera
+# requisições com o header "x-ext-authz: allow".
+# Na vida real o provider seria OPA, oauth2-proxy, Authorino, etc.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-ext-authz
+  namespace: sandbox
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: CUSTOM
+  provider:
+    name: sample-ext-authz-http
+  rules:
+    - to:
+        - operation:
+            paths: ["/headers"]

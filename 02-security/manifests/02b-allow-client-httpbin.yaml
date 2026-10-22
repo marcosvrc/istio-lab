@@ -1,0 +1,22 @@
+# Exercício 2b — libera só o que é necessário: a service account "curl" do
+# namespace client pode fazer GET em /get e /headers do httpbin. Nada mais.
+# principals = identidade SPIFFE vinda do certificado mTLS (sem o "spiffe://").
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: httpbin-allow-client
+  namespace: sandbox
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/client/sa/curl
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/get", "/headers"]
