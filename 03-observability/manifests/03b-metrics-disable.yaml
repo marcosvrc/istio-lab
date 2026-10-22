@@ -1,0 +1,16 @@
+# Exercício 3b — desliga todas as métricas Istio dos workloads do sandbox.
+# Útil para cortar custo/cardinalidade de namespaces sem interesse.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: no-metrics
+  namespace: sandbox
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: ALL_METRICS
+            mode: CLIENT_AND_SERVER
+          disabled: true

@@ -1,0 +1,10 @@
+# Exercício 5b — sobrescreve a amostragem só para o namespace sandbox: 0%.
+# Políticas mais específicas (namespace, workload) vencem a da mesh.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: sampling
+  namespace: sandbox
+spec:
+  tracing:
+    - randomSamplingPercentage: 0

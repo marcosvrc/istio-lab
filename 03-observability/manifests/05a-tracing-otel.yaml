@@ -1,0 +1,21 @@
+# Exercício 5a — troca o tracing da mesh de Zipkin para OpenTelemetry (OTLP)
+# e adiciona tags customizadas a todos os spans.
+# Substitui a Telemetry "mesh-default" do módulo 00 (o reset.sh a restaura).
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: otel-tracing
+      randomSamplingPercentage: 100
+      customTags:
+        environment:
+          literal:
+            value: istio-lab
+        user:
+          header:
+            name: x-user
+            defaultValue: anonymous

@@ -1,0 +1,14 @@
+# Exercício 4b — access log em JSON para o productpage, usando o provider
+# json-access-log definido em ../00-setup/istio-operator.yaml.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: productpage-json-log
+  namespace: bookinfo
+spec:
+  selector:
+    matchLabels:
+      app: productpage
+  accessLogging:
+    - providers:
+        - name: json-access-log

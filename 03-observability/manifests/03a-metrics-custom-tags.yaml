@@ -1,0 +1,26 @@
+# Exercício 3a — customiza as dimensões (labels) de istio_requests_total no
+# namespace bookinfo:
+#   + request_method: método HTTP
+#   + x_user: valor do header x-user ("unknown" se ausente)
+#   - request_protocol: removido (menos cardinalidade)
+# Cuidado: cada label nova multiplica o número de séries no Prometheus.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: custom-metrics
+  namespace: bookinfo
+spec:
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: REQUEST_COUNT
+            mode: CLIENT_AND_SERVER
+          tagOverrides:
+            request_method:
+              value: request.method
+            x_user:
+              value: "request.headers['x-user']"
+            request_protocol:
+              operation: REMOVE

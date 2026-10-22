@@ -1,0 +1,13 @@
+# Exercício 4a — no namespace sandbox, só registra requisições com erro.
+# O filtro é uma expressão CEL sobre os atributos do Envoy.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: access-log-errors
+  namespace: sandbox
+spec:
+  accessLogging:
+    - providers:
+        - name: envoy
+      filter:
+        expression: response.code >= 400

@@ -1,0 +1,16 @@
+# Exercício 1 — configuração quebrada de propósito, para praticar o
+# diagnóstico com Kiali, istioctl analyze e access logs.
+# O subset "v4" não existe na DestinationRule do reviews.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: reviews
+  namespace: bookinfo
+spec:
+  hosts:
+    - reviews
+  http:
+    - route:
+        - destination:
+            host: reviews
+            subset: v4
