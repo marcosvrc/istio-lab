@@ -1,0 +1,12 @@
+# Habilita tracing em toda a mesh (recurso no namespace raiz = istio-system).
+# 100% de amostragem só faz sentido em lab; em produção use 1% ou menos.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: jaeger
+      randomSamplingPercentage: 100

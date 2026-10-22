@@ -1,0 +1,76 @@
+# Configuração do control plane usada pelo lab.
+# Aplicada com: istioctl install -f istio-operator.yaml -y
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: lab
+  namespace: istio-system
+spec:
+  # default = istiod + ingress gateway. Compare com: istioctl profile dump demo
+  profile: default
+  meshConfig:
+    # Access log do Envoy no stdout de cada sidecar (kubectl logs <pod> -c istio-proxy)
+    accessLogFile: /dev/stdout
+    # Providers referenciados pelos recursos Telemetry e AuthorizationPolicy.
+    # Ficam todos aqui porque o istioctl install substitui listas em vez de
+    # mesclá-las entre overlays. Provider sem uso não tem efeito.
+    extensionProviders:
+      # Tracing (módulo 00): o Jaeger aceita o protocolo Zipkin na 9411
+      - name: jaeger
+        zipkin:
+          service: zipkin.istio-system.svc.cluster.local
+          port: 9411
+      # Tracing via OpenTelemetry/OTLP gRPC, direto no Jaeger (módulo 03)
+      - name: otel-tracing
+        opentelemetry:
+          service: jaeger-collector.istio-system.svc.cluster.local
+          port: 4317
+      # Access log estruturado em JSON (módulo 03)
+      - name: json-access-log
+        envoyFileAccessLog:
+          path: /dev/stdout
+          logFormat:
+            labels:
+              start_time: "%START_TIME%"
+              method: "%REQ(:METHOD)%"
+              path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              duration_ms: "%DURATION%"
+              upstream: "%UPSTREAM_HOST%"
+              source_principal: "%DOWNSTREAM_PEER_URI_SAN%"
+              user_agent: "%REQ(USER-AGENT)%"
+              trace_id: "%TRACE_ID%"
+      # Autorização externa (módulo 02, exercício 6)
+      - name: sample-ext-authz-http
+        envoyExtAuthzHttp:
+          service: ext-authz.sandbox.svc.cluster.local
+          port: 8000
+          includeRequestHeadersInCheck:
+            - x-ext-authz
+  components:
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          # Rancher Desktop (k3s) atende LoadBalancer via klipper-lb em localhost
+          service:
+            type: LoadBalancer
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+    pilot:
+      k8s:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+  values:
+    global:
+      proxy:
+        # Requests baixos para caber muitos pods num cluster local
+        resources:
+          requests:
+            cpu: 10m
+            memory: 40Mi
