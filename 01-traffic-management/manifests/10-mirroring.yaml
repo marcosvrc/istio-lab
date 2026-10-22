@@ -1,0 +1,23 @@
+# Exercício 10 — traffic mirroring (shadowing): 100% das requisições vão para o
+# httpbin, e uma cópia "fire and forget" vai para o httpbin-v2. A resposta da
+# cópia é descartada; o cliente só vê a do httpbin.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin
+  namespace: sandbox
+spec:
+  hosts:
+    - httpbin
+  http:
+    - route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000
+      mirror:
+        host: httpbin-v2
+        port:
+          number: 8000
+      mirrorPercentage:
+        value: 100

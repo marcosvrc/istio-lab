@@ -1,0 +1,68 @@
+# Exercício 4 — expõe o httpbin no ingress (host httpbin.local) com
+# redirect, rewrite, manipulação de headers e CORS.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: httpbin-gateway
+  namespace: sandbox
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - httpbin.local
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin-ingress
+  namespace: sandbox
+spec:
+  hosts:
+    - httpbin.local
+  gateways:
+    - httpbin-gateway
+  http:
+    # /old/... → 301 para /get (o Envoy responde sem chamar o backend)
+    - name: legacy-redirect
+      match:
+        - uri:
+            prefix: /old
+      redirect:
+        uri: /get
+        redirectCode: 301
+    # /api/xyz → /xyz no backend, com headers e CORS
+    - name: api
+      match:
+        - uri:
+            prefix: /api/
+      rewrite:
+        uri: /
+      headers:
+        request:
+          set:
+            x-lab: module-01
+        response:
+          add:
+            x-served-by: istio-ingress
+      corsPolicy:
+        allowOrigins:
+          - exact: https://example.com
+        allowMethods:
+          - GET
+        maxAge: 1h
+      route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000
+    - name: default
+      route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000

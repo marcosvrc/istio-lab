@@ -1,0 +1,21 @@
+# Exercício 7 — timeout total de 2s e até 3 retries para chamadas ao httpbin
+# dentro da mesh (sem "gateways" = vale para os sidecars, gateway "mesh").
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin
+  namespace: sandbox
+spec:
+  hosts:
+    - httpbin
+  http:
+    - timeout: 2s
+      retries:
+        attempts: 3
+        perTryTimeout: 1s
+        retryOn: 5xx,connect-failure,reset
+      route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000

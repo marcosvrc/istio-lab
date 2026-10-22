@@ -1,0 +1,28 @@
+# Exercício 6a — injeta 7s de atraso no ratings para o usuário jason.
+# Requer o 02-reviews-jason.yaml (jason → reviews v2, que chama o ratings).
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: ratings
+  namespace: bookinfo
+spec:
+  hosts:
+    - ratings
+  http:
+    - match:
+        - headers:
+            end-user:
+              exact: jason
+      fault:
+        delay:
+          percentage:
+            value: 100
+          fixedDelay: 7s
+      route:
+        - destination:
+            host: ratings
+            subset: v1
+    - route:
+        - destination:
+            host: ratings
+            subset: v1

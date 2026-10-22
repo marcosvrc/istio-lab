@@ -1,0 +1,15 @@
+# Exercício 12 — overlay que habilita o egress gateway.
+# Aplicar junto com a config base:
+#   istioctl install -f ../00-setup/istio-operator.yaml -f manifests/12-egress-gateway-operator.yaml -y
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  components:
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+        k8s:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi

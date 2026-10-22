@@ -1,0 +1,15 @@
+# Exercício 1 — todo o tráfego do reviews vai para a v1 (sem estrelas).
+# Os subsets (v1, v2, v3) vêm da DestinationRule do módulo 00.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: reviews
+  namespace: bookinfo
+spec:
+  hosts:
+    - reviews
+  http:
+    - route:
+        - destination:
+            host: reviews
+            subset: v1

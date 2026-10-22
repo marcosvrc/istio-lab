@@ -1,0 +1,62 @@
+# Exercício 12 — força a saída para httpbin.org (HTTP) a passar pelo egress
+# gateway: sidecar → istio-egressgateway → httpbin.org.
+# Requer 11b-serviceentry.yaml e o egress gateway instalado.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: istio-egressgateway
+  namespace: sandbox
+spec:
+  selector:
+    istio: egressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - httpbin.org
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: egressgateway-for-httpbin
+  namespace: sandbox
+spec:
+  host: istio-egressgateway.istio-system.svc.cluster.local
+  subsets:
+    - name: httpbin
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin-org-via-egress
+  namespace: sandbox
+spec:
+  hosts:
+    - httpbin.org
+  gateways:
+    - istio-egressgateway
+    - mesh
+  http:
+    # 1º salto: sidecars da mesh enviam para o egress gateway
+    - match:
+        - gateways:
+            - mesh
+          port: 80
+      route:
+        - destination:
+            host: istio-egressgateway.istio-system.svc.cluster.local
+            subset: httpbin
+            port:
+              number: 80
+    # 2º salto: o egress gateway envia para o destino real
+    - match:
+        - gateways:
+            - istio-egressgateway
+          port: 80
+      route:
+        - destination:
+            host: httpbin.org
+            port:
+              number: 80

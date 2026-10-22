@@ -1,0 +1,68 @@
+# Exercício 5 — o mesmo ingress usando a Kubernetes Gateway API.
+# O Istio cria automaticamente um Deployment + Service (httpbin-gw-istio) para
+# este Gateway ("deployment automático").
+#
+# No Rancher Desktop (k3s), cada LoadBalancer vira um pod svclb com hostPorts.
+# O Service gerado inclui a porta 15021 (health), já ocupada pelo
+# istio-ingressgateway, então o LoadBalancer ficaria <pending>. Por isso o
+# Service é ClusterIP e o acesso é via:
+#   kubectl -n sandbox port-forward svc/httpbin-gw-istio 8080:8080
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: httpbin-gw
+  namespace: sandbox
+  annotations:
+    networking.istio.io/service-type: ClusterIP
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      port: 8080
+      protocol: HTTP
+      hostname: httpbin.local
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: httpbin
+  namespace: sandbox
+spec:
+  parentRefs:
+    - name: httpbin-gw
+  hostnames:
+    - httpbin.local
+  rules:
+    # /api/xyz → /xyz, com header e canary 90/10 entre httpbin e httpbin-v2
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: x-lab
+                value: module-01-gateway-api
+      backendRefs:
+        - name: httpbin
+          port: 8000
+          weight: 90
+        - name: httpbin-v2
+          port: 8000
+          weight: 10
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: httpbin
+          port: 8000

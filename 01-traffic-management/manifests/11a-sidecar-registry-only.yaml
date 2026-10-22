@@ -1,0 +1,17 @@
+# Exercício 11a — recurso Sidecar no namespace sandbox:
+#  - egress.hosts: o Envoy só recebe config dos serviços listados
+#    (menos memória/CPU e menos xDS em clusters grandes)
+#  - REGISTRY_ONLY: bloqueia saída para qualquer destino fora do registro
+#    (o padrão da mesh é ALLOW_ANY)
+apiVersion: networking.istio.io/v1
+kind: Sidecar
+metadata:
+  name: default
+  namespace: sandbox
+spec:
+  egress:
+    - hosts:
+        - "./*"
+        - "istio-system/*"
+  outboundTrafficPolicy:
+    mode: REGISTRY_ONLY

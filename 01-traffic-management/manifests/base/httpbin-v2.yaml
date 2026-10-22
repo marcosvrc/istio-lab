@@ -1,0 +1,50 @@
+# Segunda versão do httpbin, usada como canary (Gateway API) e alvo de mirroring.
+# USE_REAL_HOSTNAME faz /hostname devolver o nome do pod — assim dá para
+# distinguir as respostas: httpbin (v1) responde "go-httpbin", v2 responde o pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: httpbin-v2
+  namespace: sandbox
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin-v2
+  namespace: sandbox
+  labels:
+    app: httpbin-v2
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8080
+  selector:
+    app: httpbin-v2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin-v2
+  namespace: sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbin-v2
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: httpbin-v2
+        version: v2
+    spec:
+      serviceAccountName: httpbin-v2
+      containers:
+        - name: httpbin
+          image: docker.io/mccutchen/go-httpbin:v2.15.0
+          env:
+            - name: USE_REAL_HOSTNAME
+              value: "true"
+          ports:
+            - containerPort: 8080

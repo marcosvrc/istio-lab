@@ -1,0 +1,22 @@
+# Exercício 8 — circuit breaking: no máximo 1 conexão e 1 requisição pendente.
+# O excedente recebe 503 imediato do Envoy (response flag UO = upstream overflow).
+# outlierDetection ejeta do pool o pod que responder 5xx.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: httpbin
+  namespace: sandbox
+spec:
+  host: httpbin
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1
+      http:
+        http1MaxPendingRequests: 1
+        maxRequestsPerConnection: 1
+    outlierDetection:
+      consecutive5xxErrors: 1
+      interval: 1s
+      baseEjectionTime: 3m
+      maxEjectionPercent: 100

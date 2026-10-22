@@ -1,0 +1,24 @@
+# Exercício 9 — sticky session: requisições com o mesmo header x-user caem
+# sempre no mesmo pod do reviews (consistent hash / ring hash).
+# Substitui a DestinationRule do módulo 00, mantendo os subsets.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: reviews
+  namespace: bookinfo
+spec:
+  host: reviews
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: x-user
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+    - name: v3
+      labels:
+        version: v3
