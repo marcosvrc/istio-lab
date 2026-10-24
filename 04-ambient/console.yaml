@@ -19,7 +19,7 @@ exercises:
             path: spec.mtls.mode
             hint: STRICT, PERMISSIVE ou DISABLE
     actions:
-      - label: Modo de cada workload (HBONE = ambient)
+      - label: Protocolo de cada workload no ztunnel (TCP = fora da mesh)
         run: |-
           istioctl ztunnel-config workloads | grep -E 'NAMESPACE|^(ambient|outside|bookinfo|sandbox) '
       - label: Conexões recentes no ztunnel (identidades)
@@ -98,7 +98,7 @@ exercises:
           kubectl label ns ambient istio.io/use-waypoint-
       - label: Serviços e o waypoint de cada um
         run: |-
-          istioctl ztunnel-config services -n ambient
+          istioctl ztunnel-config services --service-namespace ambient
       - label: Access log do waypoint
         run: |-
           kubectl -n ambient logs deploy/waypoint --tail=5
@@ -131,10 +131,15 @@ exercises:
             before: |
               POD_IP=$(kubectl -n ambient get pod -l app=httpbin -o jsonpath='{.items[0].status.podIP}')
             run: |-
-              kubectl -n ambient exec deploy/curl -c curl -- curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$POD_IP:8080/ip"
-          - label: chamadas do sandbox no log do waypoint
-            run: |-
-              kubectl -n ambient logs deploy/waypoint --since=5m | grep -c sandbox || true
+              kubectl -n ambient exec deploy/curl -c curl -- curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$POD_IP:8080/ip" 2>/dev/null
+          - label: quem aparece no log do waypoint (GET /get de cada cliente)
+            run: |
+              id=bypass-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- curl -s -o /dev/null -m 5 "http://httpbin.ambient:8000/get?id=$id-sidecar"
+              kubectl -n ambient exec deploy/curl -c curl -- curl -s -o /dev/null -m 5 "http://httpbin:8000/get?id=$id-ambient"
+              sleep 2
+              log=$(kubectl -n ambient logs deploy/waypoint --since=1m)
+              echo "sandbox (sidecar): $(echo "$log" | grep -c "id=$id-sidecar") · ambient: $(echo "$log" | grep -c "id=$id-ambient")"
 
   - title: 4. Roteamento L7
     summary: |
@@ -215,11 +220,11 @@ exercises:
         cases:
           - label: HTTP (istio_requests_total)
             run: |-
-              . ../03-observability/helpers.sh && promql 'sum(increase(istio_requests_total{destination_service_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload, response_code)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+              . ../03-observability/helpers.sh && promql 'sum(increase(istio_requests_total{destination_service_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload, response_code)' | awk -F'\t' '{n = int($1 + 0.5); if (n > 0) printf "%s : %d\n", $2, n}'
             tally: '^(.+) : (\d+)$'
           - label: TCP (istio_tcp_connections_opened_total)
             run: |-
-              . ../03-observability/helpers.sh && promql 'sum(increase(istio_tcp_connections_opened_total{destination_workload_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+              . ../03-observability/helpers.sh && promql 'sum(increase(istio_tcp_connections_opened_total{destination_workload_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload)' | awk -F'\t' '{n = int($1 + 0.5); if (n > 0) printf "%s : %d\n", $2, n}'
             tally: '^(.+) : (\d+)$'
 
   - title: 6. Ingress gateway → serviço ambient
@@ -272,7 +277,7 @@ exercises:
       - label: 3. Usar o waypoint no namespace bookinfo
         run: |-
           kubectl -n bookinfo wait --for=condition=Programmed gateway/waypoint --timeout=120s && kubectl label ns bookinfo istio.io/use-waypoint=waypoint --overwrite
-      - label: 4. Memória do ztunnel, istio-cni e waypoint
+      - label: 4. Memória do ztunnel, istio-cni e waypoint (o waypoint leva ~1 min para ter métricas)
         run: |-
           kubectl top pods -n istio-system | grep -E 'NAME|ztunnel|cni'; kubectl top pods -n bookinfo | grep -E 'NAME|waypoint'
       - label: 5. Voltar o Bookinfo para sidecar
@@ -281,12 +286,12 @@ exercises:
     tests:
       - title: Modo do Bookinfo
         cases:
-          - label: protocolo dos workloads (ztunnel)
+          - label: labels do namespace bookinfo
             run: |-
-              istioctl ztunnel-config workloads -n bookinfo | awk 'NR>1 {print $NF}' | sort | uniq -c | awk '{printf "%s × %s ", $1, $2}'
-          - label: contêineres por pod
+              echo "dataplane-mode=$(kubectl get ns bookinfo -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}') istio-injection=$(kubectl get ns bookinfo -o jsonpath='{.metadata.labels.istio-injection}')"
+          - label: contêineres do pod mais novo do productpage
             run: |-
-              kubectl -n bookinfo get pods -l app=productpage -o jsonpath='{.items[0].spec.containers[*].name}'
+              kubectl -n bookinfo get pods -l app=productpage --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].spec.initContainers[*].name} {.items[-1:].spec.containers[*].name}'
       - title: Versão do reviews
         chart: true
         cases:

@@ -114,7 +114,7 @@ for q in 0.5 0.9 0.99; do
 done
 ```
 
-> O p99 dá ~495ms, e não 500+. O `histogram_quantile` interpola dentro do bucket `250–500ms`, e os buckets padrão são largos (0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000...). Percentil de histograma é estimativa; para SLOs, prefira "% de requisições abaixo de X ms", usando o bucket `le="X"` diretamente.
+> O p99 dá ~495ms, e não 500+. O `histogram_quantile` interpola dentro do bucket `250–500ms`, e os buckets padrão são largos (0.5, 1, 5, 10, 25, 50, 100, 250, 500, 1000...). Percentil de histograma é estimativa; para SLOs, prefira "% de requisições abaixo de X ms", usando o bucket `le="X"` diretamente. Atenção ao formato: neste Prometheus o label é float (`le="100.0"`, e não `le="100"`), e um filtro com o valor errado devolve vazio sem erro.
 
 **Control plane:**
 

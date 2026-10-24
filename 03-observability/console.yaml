@@ -84,11 +84,11 @@ exercises:
         cases:
           - label: visão do cliente (reporter=source)
             run: |-
-              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="source",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="source",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{n = int($1 + 0.5); if (n > 0) printf "%s : %d\n", $2, n}'
             tally: '^(.+) : (\d+)$'
           - label: visão do servidor (reporter=destination)
             run: |-
-              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="destination",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="destination",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{n = int($1 + 0.5); if (n > 0) printf "%s : %d\n", $2, n}'
             tally: '^(.+) : (\d+)$'
       - title: SLIs do ratings (visão do cliente)
         cases:
@@ -104,9 +104,9 @@ exercises:
           - label: latência p99 (interpolada no bucket 250–500ms)
             run: |-
               . ./helpers.sh && promql 'histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings"}[1m])) by (le))' | awk '{printf "%.0f ms\n", $1}'
-          - label: "% abaixo de 100ms (bucket le=100)"
+          - label: "% abaixo de 100ms (bucket le=100.0)"
             run: |-
-              . ./helpers.sh && promql 'sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings",le="100"}[1m])) / sum(rate(istio_request_duration_milliseconds_count{reporter="source",destination_service_name="ratings"}[1m]))' | awk '{printf "%.0f%%\n", $1 * 100}'
+              . ./helpers.sh && promql 'sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings",le="100.0"}[1m])) / sum(rate(istio_request_duration_milliseconds_count{reporter="source",destination_service_name="ratings"}[1m]))' | awk '{printf "%.0f%%\n", $1 * 100}'
 
   - title: 3. Customizar e desligar métricas
     summary: |
@@ -124,11 +124,11 @@ exercises:
       - title: 3a — labels customizadas
         chart: true
         cases:
-          - label: 5 com x-user alice + 5 sem header → séries por x_user
+          - label: 5 com x-user alice + 5 sem header → total acumulado por série
             run: |
               kubectl -n sandbox exec deploy/curl -c curl -- sh -c 'for i in 1 2 3 4 5; do curl -s -o /dev/null -H "x-user: alice" http://reviews.bookinfo:9080/reviews/0; curl -s -o /dev/null http://reviews.bookinfo:9080/reviews/0; done'
               sleep 25
-              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="destination",destination_service_name="reviews",source_workload="curl"}[1m])) by (x_user, request_method, request_protocol)' | awk -F'\t' '{printf "%s : %d\n", ($2 == "" ? "(sem labels extras)" : $2), $1 + 0.5}'
+              . ./helpers.sh && promql 'sum(istio_requests_total{reporter="destination",destination_service_name="reviews",source_workload="curl",x_user!=""}) by (x_user, request_method, request_protocol)' | awk -F'\t' '{n = int($1 + 0.5); if (n > 0) printf "%s : %d\n", $2, n}'
             tally: '^(.+) : (\d+)$'
       - title: 3b — métricas do sandbox
         cases:

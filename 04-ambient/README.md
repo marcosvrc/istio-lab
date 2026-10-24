@@ -68,8 +68,9 @@ Os sidecars continuam funcionando: os dois modos convivem na mesma mesh.
 kubectl -n ambient get pods                    # READY 1/1: sem sidecar
 kubectl -n istio-system get ds ztunnel istio-cni-node
 istioctl ztunnel-config workloads | grep -E 'NAMESPACE|ambient|outside|bookinfo'
-#   ambient  → PROTOCOL HBONE (na mesh, via ztunnel)
-#   bookinfo → TCP (sidecar), outside → TCP (fora da mesh)
+#   ambient  → HBONE (na mesh, via ztunnel)
+#   outside  → TCP (fora da mesh)
+#   bookinfo → HBONE também: sidecars criados depois do perfil ambient aceitam HBONE
 ```
 
 Atalho:
@@ -136,7 +137,7 @@ kubectl apply -f manifests/03a-waypoint.yaml      # ou: istioctl waypoint apply 
 kubectl -n ambient wait --for=condition=Programmed gateway/waypoint
 kubectl label ns ambient istio.io/use-waypoint=waypoint
 kubectl -n ambient get pods,svc -l gateway.networking.k8s.io/gateway-name=waypoint
-istioctl ztunnel-config services -n ambient       # coluna WAYPOINT preenchida
+istioctl ztunnel-config services --service-namespace ambient   # coluna WAYPOINT preenchida
 ```
 
 ```bash
@@ -154,7 +155,17 @@ kubectl -n ambient logs deploy/waypoint --tail=3  # access log do waypoint
 from sandbox http://httpbin.ambient:8000/ip       # 200: furou a política L7!
 ```
 
-Neste lab (Istio 1.31), o sidecar envia direto ao pod do destino, e o waypoint nunca vê a requisição (`kubectl -n ambient logs deploy/waypoint | grep -c sandbox` → 0). O mesmo vale para quem chama o **IP do pod** em vez do Service. A defesa é uma política L4 no ztunnel aceitando só o waypoint:
+Neste lab (Istio 1.31), o sidecar envia direto ao pod do destino, e o waypoint nunca vê a requisição. Marque as chamadas com um id e procure no log do waypoint:
+
+```bash
+id=bypass-$RANDOM
+kubectl -n sandbox exec deploy/curl -c curl -- curl -s -o /dev/null "http://httpbin.ambient:8000/get?id=$id-sidecar"
+kubectl -n ambient exec deploy/curl -c curl -- curl -s -o /dev/null "http://httpbin:8000/get?id=$id-ambient"
+kubectl -n ambient logs deploy/waypoint --since=1m | grep -oE "id=$id-[a-z]+" | sort | uniq -c
+#   1 id=bypass-...-ambient      ← só a chamada do pod ambient passou pelo waypoint
+```
+
+O mesmo vale para quem chama o **IP do pod** em vez do Service. A defesa é uma política L4 no ztunnel aceitando só o waypoint:
 
 ```bash
 POD_IP=$(kubectl -n ambient get pod -l app=httpbin -o jsonpath='{.items[0].status.podIP}')
@@ -254,7 +265,9 @@ kubectl label ns bookinfo istio-injection- istio.io/dataplane-mode=ambient
 kubectl -n bookinfo rollout restart deploy
 kubectl -n bookinfo get pods -w           # 1/1. Erros na página durante a troca são esperados
 curl -s localhost/productpage | grep -oE 'reviews-v[0-9]'
-istioctl ztunnel-config workloads -n bookinfo   # HBONE
+kubectl -n bookinfo get pod -l app=productpage -o jsonpath='{.items[0].spec.initContainers[*].name} {.items[0].spec.containers[*].name}{"\n"}'
+#   " productpage": sem init container nem istio-proxy
+#   com sidecar seria "istio-validation istio-proxy productpage" (istio-init sem o istio-cni)
 ```
 
 > Num namespace já ambient, um **pod novo** entra na mesh sem restart. O restart aqui serve só para **remover** o sidecar.
