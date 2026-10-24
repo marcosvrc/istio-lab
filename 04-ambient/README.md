@@ -62,6 +62,8 @@ O script:
 
 Os sidecars continuam funcionando: os dois modos convivem na mesma mesh.
 
+> O perfil ambient troca as imagens do Istio pela variante **distroless** (`1.31.0-distroless`). Os pods recriados depois disso, sidecars incluídos, ficam sem shell e sem `curl` no container `istio-proxy`. Para testar chamadas "de dentro" de um pod, use o container da aplicação ou um pod `curl`.
+
 ```bash
 kubectl -n ambient get pods                    # READY 1/1: sem sidecar
 kubectl -n istio-system get ds ztunnel istio-cni-node

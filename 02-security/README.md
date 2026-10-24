@@ -141,8 +141,11 @@ curl -s localhost/productpage | grep -oE 'reviews-v[0-9]'          # a página f
 
 from client http://productpage.bookinfo:9080/productpage           # 403
 from client http://reviews.bookinfo:9080/reviews/0                 # 403
-# nem o productpage pode pular o reviews e chamar o ratings direto:
-kubectl -n bookinfo exec deploy/productpage-v1 -c istio-proxy -- curl -s -o /dev/null -w '%{http_code}\n' http://ratings:9080/ratings/0   # 403
+# nem o productpage pode pular o reviews e chamar o ratings direto
+# (a chamada sai do container do app, com a identidade do productpage):
+kubectl -n bookinfo exec deploy/productpage-v1 -c productpage -- python -c "import urllib.request as u, urllib.error as e
+try: print(u.urlopen('http://ratings:9080/ratings/0', timeout=5).status)
+except e.HTTPError as x: print(x.code)"   # 403
 ```
 
 Remova a regra do `ratings` e veja a página mostrar *"Ratings service is currently unavailable"*. Abra o Kiali e veja as arestas negadas em vermelho.
