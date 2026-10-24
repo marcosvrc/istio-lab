@@ -215,3 +215,58 @@ exercises:
             in: client
             run: |-
               curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+
+  - title: 7. CA própria (plug-in certs)
+    summary: |
+      O istiod assina com a CA do secret `cacerts`, quando ele existe. Nenhum certificado muda até o pod ser recriado.
+      **Troca direta (7a):** gere a CA, plugue com `lab` e recrie só o sandbox: o client (raiz antiga) não fala com o httpbin (raiz nova). Recrie a mesh e volta a funcionar.
+      **Sem downtime (7b):** `trust-both` → recriar a mesh → `orig-signer` → recriar o sandbox (o client continua funcionando) → recriar a mesh → `remove` → recriar a mesh. Cada recriação da mesh leva ~1 min.
+    actions:
+      - label: Gerar a CA do lab (raiz + intermediária)
+        run: |-
+          ca/gen-ca.sh
+      - label: "7a. Plugar a CA do lab (troca direta)"
+        run: |-
+          ca/plug.sh lab
+      - label: Recriar só o sandbox
+        run: |-
+          ca/restart-mesh.sh sandbox
+      - label: Recriar a mesh inteira (gateways e ztunnel incluídos)
+        run: |-
+          ca/restart-mesh.sh
+      - label: "7b. 1) Assinar com a do lab, confiar nas duas"
+        run: |-
+          ca/plug.sh trust-both
+      - label: "7b. 2) Assinar com a original, confiar nas duas"
+        run: |-
+          ca/plug.sh orig-signer
+      - label: "7b. 3) Remover o cacerts (CA autoassinada do istiod)"
+        run: |-
+          ca/plug.sh remove
+      - label: Cadeia do certificado do httpbin
+        run: |-
+          istioctl proxy-config secret deploy/httpbin -n sandbox -o json | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | base64 -d | openssl crl2pkcs7 -nocrl -certfile /dev/stdin | openssl pkcs7 -print_certs -noout
+    tests:
+      - title: Emissor do certificado de cada workload
+        cases:
+          - label: httpbin (sandbox)
+            run: |-
+              istioctl proxy-config secret deploy/httpbin -n sandbox -o json | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | base64 -d | openssl x509 -noout -issuer | sed 's/^issuer=//'
+          - label: curl (client)
+            run: |-
+              istioctl proxy-config secret deploy/curl -n client -o json | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | base64 -d | openssl x509 -noout -issuer | sed 's/^issuer=//'
+          - label: raízes no trust bundle do client
+            run: |-
+              istioctl proxy-config secret deploy/curl -n client -o json | jq -r '.dynamicActiveSecrets[] | select(.name=="ROOTCA") | .secret.validationContext.trustedCa.inlineBytes' | base64 -d | grep -c 'BEGIN CERT'
+          - label: CA configurada no istiod
+            run: |-
+              kubectl -n istio-system get secret cacerts -o jsonpath='{.data.ca-cert\.pem}' 2>/dev/null | base64 -d | openssl x509 -noout -subject 2>/dev/null | sed 's/^subject=//' | grep . || echo "sem cacerts (autoassinada)"
+      - title: mTLS entre workloads
+        cases:
+          - label: client → httpbin.sandbox
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+          - label: ingress → productpage
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://localhost/productpage

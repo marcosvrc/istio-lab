@@ -15,3 +15,9 @@ done
 
 # O exercício 5 substitui o Gateway do httpbin; restaura a versão HTTP
 k apply -f manifests/base/httpbin-ingress.yaml
+
+# O exercício 7 pluga uma CA própria; volta à CA autoassinada do istiod
+if k -n istio-system get secret cacerts >/dev/null 2>&1; then
+  ca/plug.sh remove
+  ca/restart-mesh.sh
+fi

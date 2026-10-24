@@ -10,6 +10,7 @@
 | 4 | JWT no ingress: validação, exigência e claims | `RequestAuthentication` + `AuthorizationPolicy` |
 | 5 | HTTPS no ingress com cert-manager | `Certificate`, `Gateway` com `credentialName` |
 | 6 | Autorização externa | `AuthorizationPolicy` `CUSTOM` + `extensionProviders` |
+| 7 | CA própria e troca de CA sem downtime | secret `cacerts`, trust bundle com duas raízes |
 
 ## Conceitos-chave
 
@@ -250,6 +251,92 @@ Na vida real o provider seria OPA, oauth2-proxy ou Authorino. Também existe `en
 kubectl delete -f manifests/06-extauthz.yaml
 ```
 
+## 7. CA própria (plug-in certs)
+
+Por padrão, o istiod gera uma CA autoassinada (secret `istio-ca-secret`, emissor `O=cluster.local`) e assina com ela os certificados de todos os workloads. Em produção, a CA da mesh costuma ser uma **intermediária** emitida pela PKI da empresa, para que a raiz fique offline e várias meshes ou clusters confiem na mesma raiz. O istiod usa a CA do secret `istio-system/cacerts`, quando ele existe.
+
+```bash
+istioctl proxy-config secret deploy/httpbin -n sandbox -o json \
+  | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | base64 -d \
+  | openssl x509 -noout -issuer -enddate
+#   issuer=O=cluster.local          ← CA autoassinada do istiod
+#   notAfter=...                    ← validade de 24h: o istio-agent renova sozinho
+```
+
+Os scripts ficam em `ca/`:
+
+| Script | O que faz |
+|---|---|
+| `gen-ca.sh` | gera a raiz do lab e a intermediária do cluster em `ca/out/` (fora do git: tem chaves privadas) |
+| `plug.sh <modo>` | grava o `cacerts` e reinicia o istiod (`lab`, `trust-both`, `orig-signer`, `remove`) |
+| `restart-mesh.sh` | recria os workloads da mesh, gateways e ztunnel incluídos, para receberem o certificado novo |
+
+### 7a. Troca direta e o que ela quebra
+
+```bash
+ca/gen-ca.sh
+#   ca-cert.pem: OK
+#   subject=O=Istio Lab, CN=Istio Lab Intermediate CA - rancher-desktop
+#   issuer=O=Istio Lab, CN=Istio Lab Root CA
+ca/plug.sh lab
+```
+
+O istiod passa a assinar com a CA nova, mas **nenhum certificado muda** até o pod ser recriado. Recrie só o httpbin:
+
+```bash
+ca/restart-mesh.sh sandbox
+from client http://httpbin.sandbox:8000/get     # 000 (exit 28): o client ainda tem o certificado e a raiz antigos
+```
+
+O `client` não confia na raiz nova, e o httpbin não confia na antiga: o handshake mTLS falha. É o que acontece numa troca de CA feita sem preparação, entre o primeiro e o último pod recriado. Recrie o resto da mesh:
+
+```bash
+ca/restart-mesh.sh
+from client http://httpbin.sandbox:8000/get     # 200
+istioctl proxy-config secret deploy/httpbin -n sandbox
+#   default  Cert Chain  ACTIVE  ...
+#   ROOTCA   CA          ACTIVE  ...  NOT AFTER 2036-...   ← a raiz do lab (10 anos)
+```
+
+O certificado do workload agora traz a cadeia inteira (workload → intermediária → raiz):
+
+```bash
+istioctl proxy-config secret deploy/httpbin -n sandbox -o json \
+  | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | base64 -d \
+  | openssl crl2pkcs7 -nocrl -certfile /dev/stdin | openssl pkcs7 -print_certs -noout
+#   subject=        issuer=...Intermediate CA - rancher-desktop     ← o SPIFFE ID fica no SAN, não no subject
+#   subject=...Intermediate CA - rancher-desktop   issuer=...Root CA
+#   subject=...Root CA   issuer=...Root CA
+#   (a raiz aparece duas vezes: o cert-chain.pem já a contém, e o istiod a anexa de novo)
+```
+
+### 7b. Voltar à CA original sem downtime
+
+O segredo é separar **em quem se confia** de **quem assina**, e só trocar o segundo quando todos já confiam nas duas raízes:
+
+```bash
+# 1. continua assinando com a CA do lab, mas o trust bundle passa a ter as duas raízes
+ca/plug.sh trust-both
+ca/restart-mesh.sh
+istioctl proxy-config secret deploy/curl -n client -o json \
+  | jq -r '.dynamicActiveSecrets[] | select(.name=="ROOTCA") | .secret.validationContext.trustedCa.inlineBytes' \
+  | base64 -d | grep -c 'BEGIN CERT'     # 2
+
+# 2. passa a assinar com a CA original, ainda confiando nas duas
+ca/plug.sh orig-signer
+ca/restart-mesh.sh sandbox
+from client http://httpbin.sandbox:8000/get     # 200: client (CA do lab) → httpbin (CA original)
+
+# 3. todos com o certificado novo; depois disso a raiz antiga pode sair
+ca/restart-mesh.sh
+ca/plug.sh remove
+ca/restart-mesh.sh
+```
+
+> O mesmo roteiro vale para a rotação da raiz quando ela vence, e para migrar para uma CA externa (cert-manager istio-csr, Vault, AWS Private CA). No ambient, o ztunnel guarda os certificados dos pods do nó, e por isso o `restart-mesh.sh` também o reinicia.
+
+O `reset.sh` remove o `cacerts` e recria a mesh se ele existir (troca direta: espere erros por alguns segundos).
+
 ---
 
 ## Checklist de conclusão
@@ -262,6 +349,8 @@ kubectl delete -f manifests/06-extauthz.yaml
 - [ ] Exigi JWT e autorizei por claim
 - [ ] Servi HTTPS com um certificado do cert-manager
 - [ ] Deleguei a autorização a um serviço externo
+- [ ] Pluguei uma CA intermediária própria e vi a troca direta quebrar o mTLS
+- [ ] Troquei de CA sem downtime usando um trust bundle com duas raízes
 
 ## Limpeza
 
@@ -270,4 +359,5 @@ kubectl delete -f manifests/06-extauthz.yaml
 kubectl delete ns client nomesh
 kubectl -n sandbox delete -f https://raw.githubusercontent.com/istio/istio/release-1.31/samples/extauthz/ext-authz.yaml
 kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml
+rm -rf ca/out   # CA do lab (chaves privadas)
 ```

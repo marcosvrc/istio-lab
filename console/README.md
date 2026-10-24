@@ -52,7 +52,7 @@ O console escuta só em `127.0.0.1` e executa apenas o que está nos catálogos 
 |---|---|
 | 00-setup | saúde da instalação, comandos de diagnóstico |
 | 01-traffic-management | os 12 exercícios |
-| 02-security | os 6 exercícios |
+| 02-security | os 7 exercícios, incluindo a troca de CA sem downtime |
 | 03-observability | os 6 exercícios: métricas como gráfico (cliente × servidor), SLIs, access logs e traces |
 | 04-ambient | os 7 exercícios, incluindo a migração do Bookinfo passo a passo |
 | 05-extensibility-ops | os 6 exercícios, incluindo o upgrade canário completo (instalar, promover e fazer rollback) |
