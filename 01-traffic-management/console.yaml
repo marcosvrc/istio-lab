@@ -1,0 +1,346 @@
+# Catálogo do Lab Console para o módulo 01 (veja ../console/README.md)
+title: Gerenciamento de tráfego
+summary: Roteamento, canary, ingress, resiliência e controle de saída.
+setup: setup.sh
+reset: reset.sh
+
+exercises:
+  - title: 1. Roteamento por versão
+    summary: |
+      Sem regra, o `reviews` balanceia entre v1, v2 e v3. Aplique o VirtualService e rode o teste de novo: tudo vai para a v1.
+    manifests:
+      - path: manifests/01-reviews-v1.yaml
+        params:
+          - name: subset
+            label: Subset de destino
+            path: spec.http.0.route.0.destination.subset
+            hint: v1, v2 ou v3 (ou v4, que não existe, para ver o erro)
+    tests:
+      - title: Versão que respondeu
+        chart: true
+        cases:
+          - label: 30 requisições
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]|Sorry, product reviews' | head -1
+            repeat: 30
+
+  - title: 2. Roteamento por usuário (header)
+    summary: |
+      O productpage propaga o header `end-user` depois do login. O usuário configurado vai para a v2 (estrelas pretas); os demais, para a v1.
+    manifests:
+      - path: manifests/02-reviews-jason.yaml
+        params:
+          - name: user
+            label: Usuário
+            path: spec.http.0.match.0.headers.end-user.exact
+          - name: subset
+            label: Subset do usuário
+            path: spec.http.0.route.0.destination.subset
+    tests:
+      - title: Anônimo × logado
+        chart: true
+        cases:
+          - label: anônimo
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]' | head -1
+            repeat: 15
+          - label: logado como jason
+            before: |
+              J=$(mktemp); curl -s -c "$J" -o /dev/null -d 'username=jason&passwd=x' http://localhost/login
+            run: |-
+              curl -s -b "$J" http://localhost/productpage | grep -oE 'reviews-v[0-9]' | head -1
+            repeat: 15
+
+  - title: 3. Canary por peso
+    summary: |
+      Ajuste os pesos (use valores que somem 100), aplique e rode o teste. Experimente 50/50 e depois 0/100 para "promover" a v3.
+    manifests:
+      - path: manifests/03-reviews-canary.yaml
+        params:
+          - name: v1
+            label: Peso v1
+            type: number
+            path: spec.http.0.route.0.weight
+          - name: v3
+            label: Peso v3
+            type: number
+            path: spec.http.0.route.1.weight
+    tests:
+      - title: Distribuição
+        chart: true
+        cases:
+          - label: 100 requisições
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]' | head -1
+            repeat: 100
+
+  - title: 4. Ingress — redirect, rewrite, headers e CORS
+    summary: |
+      Expõe o httpbin em `localhost` com o Host `httpbin.local`.
+      No CORS, com uma origem não permitida o Envoy não bloqueia: ele encaminha ao backend (aparece `x-envoy-upstream-service-time`), e quem bloqueia é o navegador.
+    manifests:
+      - path: manifests/04-httpbin-ingress.yaml
+        params:
+          - name: origin
+            label: Origem CORS permitida
+            doc: 1
+            path: spec.http.1.corsPolicy.allowOrigins.0.exact
+    tests:
+      - title: Comportamentos do ingress
+        cases:
+          - label: /old/x → redirect
+            run: |-
+              curl -s -o /dev/null -w '%{http_code} → %{redirect_url}' -H 'Host: httpbin.local' http://localhost/old/x
+            expect: "301 → http://httpbin.local/get"
+          - label: /api/headers → rewrite + header X-Lab
+            run: |-
+              curl -s -H 'Host: httpbin.local' http://localhost/api/headers | grep -A1 '"X-Lab"' | tail -1 | tr -d ' "[]'
+            expect: module-01
+          - label: header de resposta x-served-by
+            run: |-
+              curl -s -o /dev/null -D - -H 'Host: httpbin.local' http://localhost/api/get | grep -i '^x-served-by' | tr -d '\r'
+            expect: "x-served-by: istio-ingress"
+          - label: preflight de https://example.com
+            run: |-
+              curl -s -o /dev/null -D - -X OPTIONS -H 'Host: httpbin.local' -H 'Origin: https://example.com' -H 'Access-Control-Request-Method: GET' http://localhost/api/get | grep -ic '^x-envoy-upstream-service-time' | sed 's/^0$/respondido pelo Envoy/; s/^1$/encaminhado ao backend/'
+          - label: preflight de https://evil.com
+            run: |-
+              curl -s -o /dev/null -D - -X OPTIONS -H 'Host: httpbin.local' -H 'Origin: https://evil.com' -H 'Access-Control-Request-Method: GET' http://localhost/api/get | grep -ic '^x-envoy-upstream-service-time' | sed 's/^0$/respondido pelo Envoy/; s/^1$/encaminhado ao backend/'
+
+  - title: 5. Kubernetes Gateway API
+    summary: |
+      O Istio cria sozinho o Deployment e o Service `httpbin-gw-istio` para o Gateway. A HTTPRoute divide o tráfego entre httpbin (v1) e httpbin-v2.
+      O teste chama o gateway de dentro do cluster. Do seu Mac, use `kubectl -n sandbox port-forward svc/httpbin-gw-istio 8080:8080`.
+    manifests:
+      - path: manifests/05-gateway-api.yaml
+        params:
+          - name: v1
+            label: Peso httpbin (v1)
+            type: number
+            doc: 1
+            path: spec.rules.0.backendRefs.0.weight
+          - name: v2
+            label: Peso httpbin-v2
+            type: number
+            doc: 1
+            path: spec.rules.0.backendRefs.1.weight
+    actions:
+      - label: Status do Gateway e recursos criados pelo Istio
+        run: |-
+          kubectl -n sandbox get gateway.gateway.networking.k8s.io httpbin-gw && kubectl -n sandbox get deploy,svc httpbin-gw-istio
+    tests:
+      - title: Canary pela HTTPRoute
+        chart: true
+        cases:
+          - label: 50 requisições a /api/hostname
+            in: sandbox
+            run: |-
+              curl -s -H 'Host: httpbin.local' http://httpbin-gw-istio:8080/api/hostname | grep -o '"hostname": "[^"]*' | sed 's/.*: "//; s/httpbin-v2-.*/httpbin-v2/'
+            repeat: 50
+
+  - title: 6. Injeção de falhas
+    summary: |
+      Aplique o roteamento do jason e **uma** das falhas (as duas usam o mesmo VirtualService `ratings`).
+      Com delay de 7s, o erro aparece no **reviews** em ~6s: o productpage desiste após 3s e tenta mais uma vez. Teste com 2s e veja a página funcionar.
+    manifests:
+      - path: manifests/02-reviews-jason.yaml
+        note: pré-requisito (jason → reviews v2, que chama o ratings)
+      - path: manifests/06a-fault-delay.yaml
+        params:
+          - name: delay
+            label: Atraso
+            path: spec.http.0.fault.delay.fixedDelay
+            hint: |-
+              ex.: 7s, 2s, 500ms
+      - path: manifests/06b-fault-abort.yaml
+        params:
+          - name: status
+            label: Código HTTP
+            type: number
+            path: spec.http.0.fault.abort.httpStatus
+    tests:
+      - title: Página do jason
+        cases:
+          - label: jason
+            before: |
+              J=$(mktemp); curl -s -c "$J" -o /dev/null -d 'username=jason&passwd=x' http://localhost/login
+            run: |
+              curl -s -b "$J" -w '\n__T=%{time_total}' http://localhost/productpage | awk '/Sorry, product reviews/ {m="reviews indisponível"} /Ratings service is currently unavailable/ {m="ratings indisponível"} /__T=/ {sub("__T=",""); t=$0} END {printf "%s em %.0fs\n", (m ? m : "página ok"), t}'
+          - label: anônimo
+            run: |
+              curl -s -w '\n__T=%{time_total}' http://localhost/productpage | awk '/Sorry, product reviews/ {m="reviews indisponível"} /Ratings service is currently unavailable/ {m="ratings indisponível"} /__T=/ {sub("__T=",""); t=$0} END {printf "%s em %.0fs\n", (m ? m : "página ok"), t}'
+
+  - title: 7. Timeouts e retries
+    summary: |
+      Vale para chamadas ao httpbin dentro da mesh. O `/delay/5` deve ser cortado pelo timeout, e o `/status/503` deve chegar ao httpbin 1 + N vezes.
+    manifests:
+      - path: manifests/07-timeouts-retries.yaml
+        params:
+          - name: timeout
+            label: Timeout total
+            path: spec.http.0.timeout
+          - name: attempts
+            label: Retries
+            type: number
+            path: spec.http.0.retries.attempts
+    tests:
+      - title: Timeout
+        cases:
+          - label: GET /delay/5
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code} %{time_total}' http://httpbin:8000/delay/5 | awk '{printf "%s em %.0fs\n", $1, $2}'
+      - title: Retries
+        cases:
+          - label: tentativas de GET /status/503 que chegaram ao httpbin
+            run: |
+              id=retry-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- curl -s -o /dev/null "http://httpbin:8000/status/503?id=$id"
+              sleep 2
+              kubectl -n sandbox logs deploy/httpbin -c istio-proxy --since=30s | grep -c "$id"
+          - label: response flag no cliente
+            run: |
+              kubectl -n sandbox exec deploy/curl -c curl -- curl -s -o /dev/null http://httpbin:8000/status/503
+              sleep 1
+              kubectl -n sandbox logs deploy/curl -c istio-proxy --tail=1 | awk '{print $5, $6}'
+
+  - title: 8. Circuit breaking
+    summary: |
+      Remova o exercício 7 antes (os retries mascaram o efeito). O excedente recebe 503 do Envoy do **cliente** (flag `UO`), sem chegar ao httpbin.
+    manifests:
+      - path: manifests/08-circuit-breaker.yaml
+        params:
+          - name: maxConnections
+            label: maxConnections
+            type: number
+            path: spec.trafficPolicy.connectionPool.tcp.maxConnections
+          - name: pending
+            label: http1MaxPendingRequests
+            type: number
+            path: spec.trafficPolicy.connectionPool.http.http1MaxPendingRequests
+    tests:
+      - title: fortio — 30 requisições
+        chart: true
+        cases:
+          - label: 1 conexão concorrente
+            run: |-
+              kubectl -n sandbox exec deploy/fortio-deploy -c fortio -- /usr/bin/fortio load -c 1 -qps 0 -n 30 -loglevel Error http://httpbin:8000/get 2>&1
+            tally: '^Code (\d+) : (\d+)'
+          - label: 3 conexões concorrentes
+            run: |-
+              kubectl -n sandbox exec deploy/fortio-deploy -c fortio -- /usr/bin/fortio load -c 3 -qps 0 -n 30 -loglevel Error http://httpbin:8000/get 2>&1
+            tally: '^Code (\d+) : (\d+)'
+
+  - title: 9. Sticky session (consistent hash)
+    summary: |
+      Requisições com o mesmo `x-user` caem sempre no mesmo pod. Remova o VirtualService do reviews e escale a v1 para ter mais pods.
+    manifests:
+      - path: manifests/09-sticky-session.yaml
+        params:
+          - name: header
+            label: Header do hash
+            path: spec.trafficPolicy.loadBalancer.consistentHash.httpHeaderName
+    actions:
+      - label: Remover VirtualService do reviews
+        run: |-
+          kubectl -n bookinfo delete vs reviews --ignore-not-found
+      - label: Escalar reviews-v1 para 3 réplicas
+        run: |-
+          kubectl -n bookinfo scale deploy reviews-v1 --replicas=3 && kubectl -n bookinfo rollout status deploy reviews-v1
+      - label: Voltar reviews-v1 para 1 réplica
+        run: |-
+          kubectl -n bookinfo scale deploy reviews-v1 --replicas=1
+    tests:
+      - title: Pod que respondeu
+        chart: true
+        cases:
+          - label: x-user alice
+            in: sandbox
+            run: |-
+              curl -s -H 'x-user: alice' http://reviews.bookinfo:9080/reviews/0 | grep -o '"podname": "[^"]*' | cut -d'"' -f4
+            repeat: 15
+          - label: x-user bob
+            in: sandbox
+            run: |-
+              curl -s -H 'x-user: bob' http://reviews.bookinfo:9080/reviews/0 | grep -o '"podname": "[^"]*' | cut -d'"' -f4
+            repeat: 15
+          - label: sem header
+            in: sandbox
+            run: |-
+              curl -s http://reviews.bookinfo:9080/reviews/0 | grep -o '"podname": "[^"]*' | cut -d'"' -f4
+            repeat: 15
+
+  - title: 10. Traffic mirroring
+    summary: |
+      Toda requisição vai para o httpbin, e uma cópia vai para o httpbin-v2. A resposta da cópia é descartada.
+    manifests:
+      - path: manifests/10-mirroring.yaml
+        params:
+          - name: percent
+            label: "% espelhado"
+            type: number
+            path: spec.http.0.mirrorPercentage.value
+    tests:
+      - title: Quem recebeu 20 requisições
+        cases:
+          - label: contagem nos access logs
+            run: |
+              id=mirror-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- sh -c "for i in \$(seq 20); do curl -s -o /dev/null http://httpbin:8000/anything/$id; done"
+              sleep 3
+              echo "httpbin=$(kubectl -n sandbox logs deploy/httpbin -c istio-proxy --since=1m | grep -c $id)  httpbin-v2=$(kubectl -n sandbox logs deploy/httpbin-v2 -c istio-proxy --since=1m | grep -c $id)"
+
+  - title: 11. Controle de saída e recurso Sidecar
+    summary: |
+      Com `REGISTRY_ONLY`, só sai o que está registrado (ServiceEntry). O `Sidecar` também reduz a config de cada Envoy: compare o número de clusters antes e depois.
+    manifests:
+      - path: manifests/11a-sidecar-registry-only.yaml
+      - path: manifests/11b-serviceentry.yaml
+    tests:
+      - title: Saída a partir do sandbox
+        cases:
+          - label: https://www.google.com
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' https://www.google.com
+          - label: http://httpbin.org/get
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.org/get
+          - label: https://httpbin.org/get
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' https://httpbin.org/get
+          - label: clusters no Envoy do curl
+            run: |-
+              istioctl proxy-config clusters deploy/curl -n sandbox | tail -n +2 | wc -l | tr -d ' '
+
+  - title: 12. Egress gateway
+    summary: |
+      Força a saída para httpbin.org a passar pelo egress gateway. Requer o ServiceEntry do exercício 11 (`11b`).
+      O botão de instalação preserva o modo ambient, se ele estiver ativo (módulo 04).
+    manifests:
+      - path: manifests/11b-serviceentry.yaml
+        note: pré-requisito
+      - path: manifests/12-egress-gateway.yaml
+    actions:
+      - label: Instalar o egress gateway
+        run: |
+          set -- -f ../00-setup/istio-operator.yaml -f manifests/12-egress-gateway-operator.yaml
+          if kubectl -n istio-system get ds ztunnel >/dev/null 2>&1; then set -- "$@" -f ../04-ambient/ambient-operator.yaml; fi
+          istioctl install -y "$@"
+    tests:
+      - title: Caminho da requisição
+        cases:
+          - label: sandbox/curl → http://httpbin.org/headers
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.org/headers
+            expect: "200"
+          - label: passou pelo egress gateway?
+            run: |
+              id=egress-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- curl -s -o /dev/null "http://httpbin.org/anything/$id"
+              sleep 2
+              kubectl -n istio-system logs deploy/istio-egressgateway --since=1m | grep -c "$id" | sed 's/^0$/não/; s/^[1-9].*/sim/'
+            expect: sim

@@ -1,0 +1,296 @@
+# Catálogo do Lab Console para o módulo 04 (veja ../console/README.md)
+# Os testes com "in:" rodam no pod curl do namespace: ambient (sem sidecar),
+# sandbox (com sidecar) ou outside (fora da mesh).
+title: Ambient mode
+summary: Mesh sem sidecar, com ztunnel (L4), waypoint (L7) e a migração do Bookinfo.
+setup: setup.sh
+reset: reset.sh
+
+exercises:
+  - title: 1. mTLS sem sidecar
+    summary: |
+      O app abre uma conexão TCP comum, e o istio-cni a redireciona para o ztunnel do nó, que faz o mTLS (HBONE, porta 15008) com o ztunnel do destino.
+      Em PERMISSIVE, o `outside` (sem identidade) passa. Em STRICT, é recusado (exit 56). O sidecar do `sandbox` também fala mTLS e continua passando.
+    manifests:
+      - path: manifests/01-mtls-strict.yaml
+        params:
+          - name: mode
+            label: Modo
+            path: spec.mtls.mode
+            hint: STRICT, PERMISSIVE ou DISABLE
+    actions:
+      - label: Modo de cada workload (HBONE = ambient)
+        run: |-
+          istioctl ztunnel-config workloads | grep -E 'NAMESPACE|^(ambient|outside|bookinfo|sandbox) '
+      - label: Conexões recentes no ztunnel (identidades)
+        run: |-
+          kubectl -n istio-system logs ds/ztunnel --since=1m | grep 'connection complete' | tail -5 | grep -oE 'src\.identity="[^"]*"|dst\.addr=[^ ]*|direction="[^"]*"' | paste -sd' ' -
+    tests:
+      - title: Quem consegue chamar httpbin.ambient
+        cases:
+          - label: ambient/curl (ztunnel)
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/get
+          - label: sandbox/curl (sidecar)
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.ambient:8000/get
+          - label: outside/curl (fora da mesh)
+            in: outside
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.ambient:8000/get
+
+  - title: 2. Autorização L4 no ztunnel
+    summary: |
+      2a libera só a service account `curl` do namespace ambient: o ztunnel avalia principal, namespace, IP e porta. O sidecar recebe a recusa e responde 503.
+      2b tem o **mesmo nome** e acrescenta `paths`. O ztunnel não entende HTTP, a regra nunca casa e **tudo** é negado. Aplique uma de cada vez.
+    manifests:
+      - path: manifests/02a-l4-policy.yaml
+        params:
+          - name: principal
+            label: Principal liberado
+            path: spec.rules.0.from.0.source.principals.0
+            hint: cluster.local/ns/<namespace>/sa/<service account>
+      - path: manifests/02b-l7-policy-no-waypoint.yaml
+    actions:
+      - label: Erros recentes no ztunnel
+        run: |-
+          kubectl -n istio-system logs ds/ztunnel --since=1m | grep -i error | tail -3
+    tests:
+      - title: Matriz de acesso
+        cases:
+          - label: ambient/curl  GET /get
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/get
+          - label: ambient/curl  GET /ip
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/ip
+          - label: sandbox/curl  GET /get
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.ambient:8000/get
+          - label: outside/curl  GET /get
+            in: outside
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.ambient:8000/get
+
+  - title: 3. Waypoint e autorização L7
+    summary: |
+      Aplique o waypoint (3a) e use a ação para o namespace passar por ele. A política L7 (3b) usa `targetRefs` no Service em vez de `selector`.
+      **Sidecars, o ingress e chamadas pelo IP do pod pulam o waypoint.** A defesa (3c) é uma política L4 no ztunnel que só aceita a identidade do waypoint.
+    manifests:
+      - path: manifests/03a-waypoint.yaml
+      - path: manifests/03b-l7-policy-waypoint.yaml
+        params:
+          - name: path
+            label: Segundo path liberado
+            path: spec.rules.0.to.0.operation.paths.1
+      - path: manifests/03c-l4-allow-waypoint.yaml
+    actions:
+      - label: Usar o waypoint no namespace ambient
+        run: |-
+          kubectl -n ambient wait --for=condition=Programmed gateway/waypoint --timeout=120s && kubectl label ns ambient istio.io/use-waypoint=waypoint --overwrite
+      - label: Deixar de usar o waypoint
+        run: |-
+          kubectl label ns ambient istio.io/use-waypoint-
+      - label: Serviços e o waypoint de cada um
+        run: |-
+          istioctl ztunnel-config services -n ambient
+      - label: Access log do waypoint
+        run: |-
+          kubectl -n ambient logs deploy/waypoint --tail=5
+    tests:
+      - title: Pelo Service (via waypoint)
+        cases:
+          - label: ambient/curl  GET /get
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/get
+          - label: ambient/curl  GET /ip
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/ip
+          - label: ambient/curl  POST /get
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST http://httpbin:8000/get
+          - label: ambient/curl  GET httpbin-v2 /ip (fora da política)
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin-v2:8000/ip
+      - title: Quem pula o waypoint
+        cases:
+          - label: sandbox/curl (sidecar)  GET /ip
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.ambient:8000/ip
+          - label: ambient/curl  GET /ip pelo IP do pod
+            before: |
+              POD_IP=$(kubectl -n ambient get pod -l app=httpbin -o jsonpath='{.items[0].status.podIP}')
+            run: |-
+              kubectl -n ambient exec deploy/curl -c curl -- curl -s -o /dev/null -m 5 -w '%{http_code}' "http://$POD_IP:8080/ip"
+          - label: chamadas do sandbox no log do waypoint
+            run: |-
+              kubectl -n ambient logs deploy/waypoint --since=5m | grep -c sandbox || true
+
+  - title: 4. Roteamento L7
+    summary: |
+      Requer o waypoint do exercício 3 (3a + ação "Usar o waypoint"). 4a é uma HTTPRoute com o **Service** como parentRef (GAMMA): `x-version: v2` vai sempre para a v2, e o resto segue o canary.
+      4b usa um VirtualService no httpbin-v2 (a Gateway API não tem fault injection). O atraso de um `fault.delay` não conta no `timeout` da mesma rota, por isso o timeout é testado com `/delay/3`.
+    manifests:
+      - path: manifests/03a-waypoint.yaml
+        note: pré-requisito (o namespace também precisa da label istio.io/use-waypoint)
+      - path: manifests/04a-httproute-canary.yaml
+        params:
+          - name: v1
+            label: Peso httpbin
+            type: number
+            path: spec.rules.1.backendRefs.0.weight
+          - name: v2
+            label: Peso httpbin-v2
+            type: number
+            path: spec.rules.1.backendRefs.1.weight
+      - path: manifests/04b-virtualservice-fault.yaml
+        params:
+          - name: abort
+            label: "% de 503"
+            type: number
+            path: spec.http.0.fault.abort.percentage.value
+          - name: timeout
+            label: Timeout
+            path: spec.http.0.timeout
+    actions:
+      - label: Usar o waypoint no namespace ambient
+        run: |-
+          kubectl -n ambient wait --for=condition=Programmed gateway/waypoint --timeout=120s && kubectl label ns ambient istio.io/use-waypoint=waypoint --overwrite
+      - label: Status da HTTPRoute
+        run: |-
+          kubectl -n ambient get httproute httpbin -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status} {end}{"\n"}'
+      - label: Response flags no waypoint (httpbin-v2)
+        run: |-
+          kubectl -n ambient logs deploy/waypoint --since=2m | grep httpbin-v2 | awk '{print $5, $6, $7}' | sort | uniq -c
+    tests:
+      - title: 4a — canary pela HTTPRoute
+        chart: true
+        cases:
+          - label: 50 requisições a httpbin
+            in: ambient
+            run: |-
+              curl -s http://httpbin:8000/hostname | grep -o '"hostname": "[^"]*' | sed 's/.*: "//; s/httpbin-v2-.*/httpbin-v2/'
+            repeat: 50
+          - label: com x-version v2
+            in: ambient
+            run: |-
+              curl -s -H 'x-version: v2' http://httpbin:8000/hostname | grep -o '"hostname": "[^"]*' | sed 's/.*: "//; s/httpbin-v2-.*/httpbin-v2/'
+            repeat: 10
+      - title: 4b — fault e timeout no httpbin-v2
+        chart: true
+        cases:
+          - label: 30 × GET /get
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin-v2:8000/get
+            repeat: 30
+          - label: GET /delay/3
+            in: ambient
+            run: |-
+              curl -s -o /dev/null -m 10 -w '%{http_code} %{time_total}' http://httpbin-v2:8000/delay/3 | awk '{printf "%s em %.0fs\n", $1, $2}'
+            repeat: 3
+
+  - title: 5. Observabilidade
+    summary: |
+      O ztunnel só gera métricas **TCP** (conexões e bytes). Status code e latência HTTP só existem onde há waypoint (`reporter="waypoint"`).
+      Com waypoint, cada chamada vira dois saltos TCP: curl → waypoint e waypoint → httpbin. No Kiali, os workloads ambient aparecem com o ícone de ambient.
+    actions:
+      - label: Gerar tráfego (20 requisições ao httpbin)
+        run: |-
+          kubectl -n ambient exec deploy/curl -c curl -- sh -c 'for i in $(seq 20); do curl -s -o /dev/null http://httpbin:8000/get; done' && echo "20 requisições enviadas"
+    tests:
+      - title: Métricas dos últimos 2 minutos
+        summary: Gere tráfego e espere ~20s para o Prometheus coletar.
+        chart: true
+        cases:
+          - label: HTTP (istio_requests_total)
+            run: |-
+              . ../03-observability/helpers.sh && promql 'sum(increase(istio_requests_total{destination_service_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload, response_code)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+            tally: '^(.+) : (\d+)$'
+          - label: TCP (istio_tcp_connections_opened_total)
+            run: |-
+              . ../03-observability/helpers.sh && promql 'sum(increase(istio_tcp_connections_opened_total{destination_workload_namespace="ambient"}[2m])) by (reporter, source_workload, destination_workload)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+            tally: '^(.+) : (\d+)$'
+
+  - title: 6. Ingress gateway → serviço ambient
+    summary: |
+      Expõe o httpbin em `localhost` com o Host `ambient.local`. Como os sidecars, o ingress vai direto ao pod e o canary da HTTPRoute (4a) não vale.
+      A label `istio.io/ingress-use-waypoint=true` no Service faz o ingress passar pelo waypoint. Requer o waypoint (3a + ação) e a HTTPRoute (4a).
+    manifests:
+      - path: manifests/06-ingress.yaml
+      - path: manifests/04a-httproute-canary.yaml
+        note: pré-requisito (canary 90/10)
+    actions:
+      - label: Ingress passa pelo waypoint
+        run: |-
+          kubectl -n ambient label svc httpbin istio.io/ingress-use-waypoint=true --overwrite
+      - label: Ingress direto ao pod (remove a label)
+        run: |-
+          kubectl -n ambient label svc httpbin istio.io/ingress-use-waypoint-
+    tests:
+      - title: Pelo ingress
+        chart: true
+        cases:
+          - label: 40 requisições a ambient.local
+            run: |-
+              curl -s -H 'Host: ambient.local' http://localhost/hostname | grep -o '"hostname": "[^"]*' | sed 's/.*: "//; s/httpbin-v2-.*/httpbin-v2/'
+            repeat: 40
+      - title: Passou pelo waypoint?
+        cases:
+          - label: requisições a ambient.local no log do waypoint (último minuto)
+            run: |-
+              kubectl -n ambient logs deploy/waypoint --since=1m | grep -c ambient.local || true
+
+  - title: 7. Migrar o Bookinfo para ambient
+    summary: |
+      Siga as ações em ordem: meça os sidecars, migre o namespace, veja o VirtualService do reviews ser **ignorado**, adicione o waypoint e compare o consumo. Erros na página durante a troca são esperados.
+      No final, volte para sidecar: os outros módulos assumem o Bookinfo com sidecar. O Reset do módulo também faz isso.
+    manifests:
+      - path: ../01-traffic-management/manifests/01-reviews-v1.yaml
+        note: regra L7 (tudo para a v1), ignorada sem waypoint
+      - path: manifests/07-bookinfo-waypoint.yaml
+    actions:
+      - label: 1. Memória dos sidecars do Bookinfo
+        run: |-
+          kubectl top pods -n bookinfo --containers | awk 'NR==1 || /istio-proxy/ {print; if (NR>1) {sub("Mi","",$4); t+=$4}} END {print "total istio-proxy: " t "Mi"}'
+      - label: 2. Migrar o namespace bookinfo para ambient
+        run: |
+          kubectl label ns bookinfo istio-injection- istio.io/dataplane-mode=ambient --overwrite
+          kubectl -n bookinfo rollout restart deploy
+          for d in $(kubectl -n bookinfo get deploy -o name); do kubectl -n bookinfo rollout status "$d" --timeout=180s; done
+          kubectl -n bookinfo get pods
+      - label: 3. Usar o waypoint no namespace bookinfo
+        run: |-
+          kubectl -n bookinfo wait --for=condition=Programmed gateway/waypoint --timeout=120s && kubectl label ns bookinfo istio.io/use-waypoint=waypoint --overwrite
+      - label: 4. Memória do ztunnel, istio-cni e waypoint
+        run: |-
+          kubectl top pods -n istio-system | grep -E 'NAME|ztunnel|cni'; kubectl top pods -n bookinfo | grep -E 'NAME|waypoint'
+      - label: 5. Voltar o Bookinfo para sidecar
+        run: |-
+          ./rollback-bookinfo.sh
+    tests:
+      - title: Modo do Bookinfo
+        cases:
+          - label: protocolo dos workloads (ztunnel)
+            run: |-
+              istioctl ztunnel-config workloads -n bookinfo | awk 'NR>1 {print $NF}' | sort | uniq -c | awk '{printf "%s × %s ", $1, $2}'
+          - label: contêineres por pod
+            run: |-
+              kubectl -n bookinfo get pods -l app=productpage -o jsonpath='{.items[0].spec.containers[*].name}'
+      - title: Versão do reviews
+        chart: true
+        cases:
+          - label: 20 requisições
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]|Sorry, product reviews' | head -1
+            repeat: 20

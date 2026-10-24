@@ -100,3 +100,11 @@ Prioridade: ⭐ essencial · ◆ importante · ○ avançado/opcional
 | 06-advanced | planejado |
 
 Cada módulo tem `setup.sh` (pré-requisitos), `reset.sh` (volta ao estado inicial) e um `README.md` com os exercícios. Comece por `00-setup/install.sh`.
+
+## Lab Console
+
+Prefere uma interface visual? O [Lab Console](console/) é uma aplicação web local para aplicar os manifests, ajustar parâmetros, rodar os testes com gráficos e abrir Kiali, Grafana e Jaeger com um clique:
+
+```bash
+./console/start.sh   # http://127.0.0.1:7070
+```

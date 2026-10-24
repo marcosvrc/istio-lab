@@ -1,0 +1,217 @@
+# Catálogo do Lab Console para o módulo 02 (veja ../console/README.md)
+title: Segurança
+summary: mTLS, autorização, JWT, TLS no ingress e autorização externa.
+setup: setup.sh
+reset: reset.sh
+vars:
+  TOKEN: curl -s https://raw.githubusercontent.com/istio/istio/release-1.31/security/tools/jwt/samples/demo.jwt
+  TOKEN_GROUP: curl -s https://raw.githubusercontent.com/istio/istio/release-1.31/security/tools/jwt/samples/groups-scope.jwt
+
+exercises:
+  - title: 1. mTLS PERMISSIVE → STRICT
+    summary: |
+      `client` tem sidecar (identidade + mTLS), e `nomesh` não tem. Rode os testes antes e depois de cada política.
+      Em STRICT, o `nomesh` é recusado (exit 56). O ingress continua funcionando porque faz parte da mesh.
+    manifests:
+      - path: manifests/01a-mtls-strict-sandbox.yaml
+        params:
+          - name: mode
+            label: Modo
+            path: spec.mtls.mode
+            hint: STRICT, PERMISSIVE ou DISABLE
+      - path: manifests/01b-mtls-strict-mesh.yaml
+    actions:
+      - label: Identidade que o httpbin recebe (X-Forwarded-Client-Cert)
+        run: |-
+          kubectl -n client exec deploy/curl -c curl -- curl -s http://httpbin.sandbox:8000/headers | grep -A1 Forwarded-Client | tail -1 | grep -oE 'URI=[^;"]*'
+      - label: Certificado do httpbin (SPIFFE, validade)
+        run: |
+          istioctl proxy-config secret deploy/httpbin -n sandbox -o json \
+            | jq -r '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' \
+            | base64 -d | openssl x509 -noout -issuer -dates -ext subjectAltName
+    tests:
+      - title: Quem consegue chamar
+        cases:
+          - label: client (sidecar) → httpbin.sandbox
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+          - label: nomesh (sem sidecar) → httpbin.sandbox
+            in: nomesh
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+          - label: nomesh → productpage.bookinfo
+            in: nomesh
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://productpage.bookinfo:9080/productpage
+          - label: ingress → bookinfo
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://localhost/productpage
+
+  - title: 2. AuthorizationPolicy
+    summary: |
+      Aplique na ordem: deny-all (2a), allow por identidade, método e path (2b), DENY por header (2c). Rode a matriz depois de cada passo.
+      DENY é avaliado antes de ALLOW. Sem mTLS não há `principal`, por isso o `nomesh` recebe 403.
+    manifests:
+      - path: manifests/02a-deny-all-sandbox.yaml
+      - path: manifests/02b-allow-client-httpbin.yaml
+        params:
+          - name: principal
+            label: Principal liberado
+            path: spec.rules.0.from.0.source.principals.0
+            hint: cluster.local/ns/<namespace>/sa/<service account>
+      - path: manifests/02c-deny-header.yaml
+    tests:
+      - title: Matriz de acesso ao httpbin
+        cases:
+          - label: client  GET /get
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+          - label: client  GET /ip
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/ip
+          - label: client  POST /get
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST http://httpbin.sandbox:8000/get
+          - label: client  GET /get com x-block true
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'x-block: true' http://httpbin.sandbox:8000/get
+          - label: sandbox/curl  GET /get
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin:8000/get
+          - label: nomesh  GET /get
+            in: nomesh
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get
+
+  - title: 3. Menor privilégio no Bookinfo
+    summary: |
+      Cada serviço aceita apenas o chamador legítimo: ingress → productpage → details/reviews → ratings.
+      A página continua funcionando, mas chamadas diretas de fora (ou pulando etapas) recebem 403.
+    manifests:
+      - path: manifests/03-bookinfo-least-privilege.yaml
+    tests:
+      - title: Acessos
+        cases:
+          - label: página pelo ingress
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]|Ratings service is currently unavailable|Sorry, product reviews' | head -1
+          - label: client → productpage
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://productpage.bookinfo:9080/productpage
+          - label: client → reviews
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://reviews.bookinfo:9080/reviews/0
+          - label: productpage → ratings (pulando o reviews)
+            run: |-
+              kubectl -n bookinfo exec deploy/productpage-v1 -c productpage -- python -c "import urllib.request as u, urllib.error as e
+              try: print(u.urlopen('http://ratings:9080/ratings/0', timeout=5).status)
+              except e.HTTPError as x: print(x.code)"
+
+  - title: 4. JWT no ingress
+    summary: |
+      4a valida tokens (inválido → 401), mas ainda deixa passar requisição **sem** token. 4b exige o token para `httpbin.local`. 4c exige `group1` na claim `groups` para `/status/*`.
+      Os tokens de teste são baixados do repositório do Istio.
+    manifests:
+      - path: manifests/base/httpbin-ingress.yaml
+        note: pré-requisito (httpbin.local no ingress; o reset do módulo 01 o remove)
+      - path: manifests/04a-jwt-requestauthn.yaml
+      - path: manifests/04b-jwt-require.yaml
+      - path: manifests/04c-jwt-claims.yaml
+        params:
+          - name: group
+            label: Grupo exigido
+            path: spec.rules.0.when.0.notValues.0
+            hint: group1 ou group2 (o token com grupos tem os dois)
+    tests:
+      - title: Requisições a httpbin.local
+        cases:
+          - label: sem token
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' http://localhost/headers
+          - label: token inválido
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H 'Authorization: Bearer abc.def.ghi' http://localhost/headers
+          - label: token válido (demo.jwt)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H "Authorization: Bearer $TOKEN" http://localhost/headers
+          - label: /status/200 com demo.jwt (sem grupos)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H "Authorization: Bearer $TOKEN" http://localhost/status/200
+          - label: /status/200 com groups-scope.jwt
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H "Authorization: Bearer $TOKEN_GROUP" http://localhost/status/200
+          - label: claim sub repassada ao backend (x-jwt-sub)
+            run: |-
+              curl -s -H 'Host: httpbin.local' -H "Authorization: Bearer $TOKEN" http://localhost/headers | grep -A1 '"X-Jwt-Sub"' | tail -1 | tr -d ' "[]'
+          - label: Bookinfo sem token
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://localhost/productpage
+            expect: "200"
+
+  - title: 5. HTTPS no ingress com cert-manager
+    summary: |
+      O cert-manager cria uma CA do lab e emite o certificado de `httpbin.local`. O HTTP passa a redirecionar para HTTPS.
+      Para usar no navegador, adicione `127.0.0.1 httpbin.local` ao /etc/hosts e confie na CA (veja o README).
+    manifests:
+      - path: manifests/base/httpbin-ingress.yaml
+        note: pré-requisito (httpbin.local no ingress; o reset do módulo 01 o remove)
+      - path: manifests/05-ingress-tls.yaml
+    actions:
+      - label: Status dos certificados
+        run: |-
+          kubectl get certificate -A
+    tests:
+      - title: HTTP e HTTPS
+        cases:
+          - label: http → redirect
+            run: |-
+              curl -s -o /dev/null -w '%{http_code} → %{redirect_url}' -H 'Host: httpbin.local' http://localhost/get
+          - label: https com a CA do lab
+            before: |
+              CA=$(mktemp); kubectl -n cert-manager get secret lab-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA"
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" --resolve httpbin.local:443:127.0.0.1 https://httpbin.local/get
+          - label: https sem confiar na CA
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' --resolve httpbin.local:443:127.0.0.1 https://httpbin.local/get
+          - label: emissor do certificado servido
+            run: |-
+              openssl s_client -connect 127.0.0.1:443 -servername httpbin.local </dev/null 2>/dev/null | openssl x509 -noout -issuer
+
+  - title: 6. Autorização externa (CUSTOM)
+    summary: |
+      O Envoy pergunta ao serviço `ext-authz` se cada requisição a `/headers` pode passar. O exemplo só libera quem envia `x-ext-authz: allow`.
+      O provider `sample-ext-authz-http` já está registrado em `00-setup/istio-operator.yaml`.
+    manifests:
+      - path: manifests/06-extauthz.yaml
+    actions:
+      - label: Últimas decisões do ext-authz
+        run: |-
+          kubectl -n sandbox logs deploy/ext-authz --tail=4
+    tests:
+      - title: Decisões
+        cases:
+          - label: /headers com x-ext-authz allow
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'x-ext-authz: allow' http://httpbin.sandbox:8000/headers
+          - label: /headers com x-ext-authz deny
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'x-ext-authz: deny' http://httpbin.sandbox:8000/headers
+          - label: /headers sem header
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/headers
+          - label: /get (fora da regra)
+            in: client
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://httpbin.sandbox:8000/get

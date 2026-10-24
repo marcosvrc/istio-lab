@@ -1,0 +1,237 @@
+# Catálogo do Lab Console para o módulo 03 (veja ../console/README.md)
+# Os testes usam as funções de helpers.sh (promql, traces, mcurl, load), que
+# rodam localmente e consultam o Prometheus e o Jaeger por kubectl exec.
+title: Observabilidade
+summary: Métricas, logs e tracing que o Istio gera, e a Telemetry API para customizá-los.
+reset: reset.sh
+
+exercises:
+  - title: 1. Diagnosticar uma configuração quebrada
+    summary: |
+      O VirtualService manda o `reviews` para o subset `v4`, que não existe. A página carrega, mas sem reviews.
+      Investigue do mais rápido ao mais detalhado: `istioctl analyze`, a response flag no access log do **cliente** (`NC`) e a config do Envoy. No Kiali, veja *Istio Config* e a aresta vermelha no *Graph*.
+    manifests:
+      - path: manifests/01-broken-config.yaml
+        params:
+          - name: subset
+            label: Subset de destino
+            path: spec.http.0.route.0.destination.subset
+            hint: v4 não existe; v1, v2 ou v3 corrigem
+    actions:
+      - label: istioctl analyze -n bookinfo
+        run: |-
+          istioctl analyze -n bookinfo
+      - label: Access log do productpage (chamadas ao reviews)
+        run: |-
+          kubectl -n bookinfo logs deploy/productpage-v1 -c istio-proxy --tail=50 | grep reviews | tail -5
+      - label: Subset na rota do productpage
+        run: |-
+          istioctl proxy-config routes deploy/productpage-v1 -n bookinfo --name 9080 -o json | grep -m3 -E '"cluster": "outbound\|9080\|[^|]*\|reviews'
+      - label: Clusters do reviews no productpage
+        run: |-
+          istioctl proxy-config clusters deploy/productpage-v1 -n bookinfo | grep -E 'SERVICE|reviews'
+    tests:
+      - title: Sintomas
+        chart: true
+        cases:
+          - label: página pelo ingress (10 requisições)
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]|Sorry, product reviews' | head -1
+            repeat: 10
+      - title: Response flag no cliente
+        cases:
+          - label: productpage → reviews (status, flag, detalhe)
+            run: |
+              curl -s -o /dev/null http://localhost/productpage
+              sleep 1
+              kubectl -n bookinfo logs deploy/productpage-v1 -c istio-proxy --tail=20 | grep '/reviews/' | tail -1 | awk '{print $5, $6, $7}'
+
+  - title: 2. Métricas de ouro com PromQL
+    summary: |
+      Aplique as falhas no ratings, gere tráfego e rode os testes. Compare as visões: o **cliente** (`reporter="source"`) vê os 500 com flag `FI`, e o **servidor** só vê 200, porque o abort acontece no Envoy do cliente.
+      Os valores são de `increase(...[1m])`: espere ~30s depois de gerar tráfego.
+    manifests:
+      - path: manifests/02-ratings-errors.yaml
+        params:
+          - name: abort
+            label: "% de erros 500"
+            type: number
+            path: spec.http.0.fault.abort.percentage.value
+          - name: delayPct
+            label: "% com atraso"
+            type: number
+            path: spec.http.0.fault.delay.percentage.value
+          - name: delay
+            label: Atraso
+            path: spec.http.0.fault.delay.fixedDelay
+            hint: "ex.: 500ms, 1s"
+    actions:
+      - label: Gerar tráfego (150 requisições ao Bookinfo)
+        run: |-
+          . ./helpers.sh && load 150 && echo "150 requisições enviadas"
+      - label: Tráfego por workload (req/s)
+        run: |-
+          . ./helpers.sh && promql 'sum(rate(istio_requests_total{reporter="destination",destination_service_namespace="bookinfo"}[1m])) by (destination_workload)'
+      - label: Control plane — pushes de config por tipo
+        run: |-
+          . ./helpers.sh && promql 'sum(pilot_xds_pushes) by (type)'
+      - label: Control plane — proxies conectados
+        run: |-
+          . ./helpers.sh && promql 'sum(pilot_xds) by (version)'
+    tests:
+      - title: Chamadas ao ratings no último minuto
+        chart: true
+        cases:
+          - label: visão do cliente (reporter=source)
+            run: |-
+              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="source",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+            tally: '^(.+) : (\d+)$'
+          - label: visão do servidor (reporter=destination)
+            run: |-
+              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="destination",destination_service_name="ratings"}[1m])) by (response_code, response_flags)' | awk -F'\t' '{printf "%s : %d\n", $2, $1 + 0.5}'
+            tally: '^(.+) : (\d+)$'
+      - title: SLIs do ratings (visão do cliente)
+        cases:
+          - label: taxa de sucesso
+            run: |-
+              . ./helpers.sh && promql 'sum(rate(istio_requests_total{reporter="source",destination_service_name="ratings",response_code!~"5.."}[1m])) / sum(rate(istio_requests_total{reporter="source",destination_service_name="ratings"}[1m]))' | awk '{printf "%.0f%%\n", $1 * 100}'
+          - label: latência p50
+            run: |-
+              . ./helpers.sh && promql 'histogram_quantile(0.5, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings"}[1m])) by (le))' | awk '{printf "%.0f ms\n", $1}'
+          - label: latência p90
+            run: |-
+              . ./helpers.sh && promql 'histogram_quantile(0.9, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings"}[1m])) by (le))' | awk '{printf "%.0f ms\n", $1}'
+          - label: latência p99 (interpolada no bucket 250–500ms)
+            run: |-
+              . ./helpers.sh && promql 'histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings"}[1m])) by (le))' | awk '{printf "%.0f ms\n", $1}'
+          - label: "% abaixo de 100ms (bucket le=100)"
+            run: |-
+              . ./helpers.sh && promql 'sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="ratings",le="100"}[1m])) / sum(rate(istio_request_duration_milliseconds_count{reporter="source",destination_service_name="ratings"}[1m]))' | awk '{printf "%.0f%%\n", $1 * 100}'
+
+  - title: 3. Customizar e desligar métricas
+    summary: |
+      3a adiciona `request_method` e `x_user` a `istio_requests_total` no bookinfo e remove `request_protocol`. 3b desliga as métricas do sandbox.
+      Labels com muitos valores (user-id, path completo) explodem a **cardinalidade** do Prometheus. Os testes esperam ~20s para a métrica ser coletada.
+    manifests:
+      - path: manifests/03a-metrics-custom-tags.yaml
+        params:
+          - name: header
+            label: Expressão do x_user
+            path: spec.metrics.0.overrides.0.tagOverrides.x_user.value
+            hint: "CEL, ex.: request.headers['x-user'] ou request.url_path"
+      - path: manifests/03b-metrics-disable.yaml
+    tests:
+      - title: 3a — labels customizadas
+        chart: true
+        cases:
+          - label: 5 com x-user alice + 5 sem header → séries por x_user
+            run: |
+              kubectl -n sandbox exec deploy/curl -c curl -- sh -c 'for i in 1 2 3 4 5; do curl -s -o /dev/null -H "x-user: alice" http://reviews.bookinfo:9080/reviews/0; curl -s -o /dev/null http://reviews.bookinfo:9080/reviews/0; done'
+              sleep 25
+              . ./helpers.sh && promql 'sum(increase(istio_requests_total{reporter="destination",destination_service_name="reviews",source_workload="curl"}[1m])) by (x_user, request_method, request_protocol)' | awk -F'\t' '{printf "%s : %d\n", ($2 == "" ? "(sem labels extras)" : $2), $1 + 0.5}'
+            tally: '^(.+) : (\d+)$'
+      - title: 3b — métricas do sandbox
+        cases:
+          - label: total do httpbin antes → depois de 10 requisições
+            run: |
+              . ./helpers.sh
+              q='sum(istio_requests_total{reporter="destination",destination_workload="httpbin"})'
+              a=$(promql "$q" | cut -f1)
+              kubectl -n sandbox exec deploy/curl -c curl -- sh -c 'for i in $(seq 10); do curl -s -o /dev/null http://httpbin:8000/get; done'
+              sleep 25
+              b=$(promql "$q" | cut -f1)
+              echo "${a:-0} → ${b:-0}"
+
+  - title: 4. Access logs
+    summary: |
+      4a registra só respostas com erro no sandbox (filtro CEL). 4b gera log em JSON só para o productpage, com `trace_id` e `source_principal`.
+      Mudanças de access log alteram o listener do Envoy: espere ~20s depois de aplicar. Só pode haver **uma** Telemetry sem `selector` por namespace.
+    manifests:
+      - path: manifests/04a-access-log-errors-only.yaml
+        params:
+          - name: filter
+            label: Filtro (CEL)
+            path: spec.accessLogging.0.filter.expression
+            hint: "ex.: response.code >= 500 ou request.url_path.startsWith('/status')"
+      - path: manifests/04b-access-log-json.yaml
+    tests:
+      - title: 4a — o que foi registrado no httpbin
+        cases:
+          - label: get, status/500, headers, status/404, get
+            run: |
+              id=log-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- sh -c "for p in get status/500 headers status/404 get; do curl -s -o /dev/null \"http://httpbin:8000/\$p?id=$id\"; done"
+              sleep 2
+              codes=$(kubectl -n sandbox logs deploy/httpbin -c istio-proxy --since=1m | grep "$id" | awk '{print $5}' | sort | tr '\n' ' ')
+              echo "$(echo $codes | wc -w | tr -d ' ') de 5 registradas: ${codes:-nenhuma}"
+      - title: 4b — linha JSON do productpage
+        cases:
+          - label: último log em JSON
+            run: |
+              curl -s -o /dev/null http://localhost/productpage
+              sleep 2
+              kubectl -n bookinfo logs deploy/productpage-v1 -c istio-proxy --since=1m | grep '^{' | tail -1 | jq -c '{method, path, status, flags, duration_ms, source_principal, trace_id}'
+
+  - title: 5. Tracing
+    summary: |
+      O Envoy cria os spans, mas é a aplicação que propaga os headers de contexto. Com reviews v2/v3 o trace tem 9 spans (inclui o ratings); com a v1, 7.
+      5a troca o provider da mesh de Zipkin para OTLP e adiciona tags. 5b zera a amostragem só no sandbox. Para restaurar a Telemetry da mesh, use a ação abaixo (ou o Reset do módulo). Abra o **Jaeger** pela barra superior.
+    manifests:
+      - path: manifests/05a-tracing-otel.yaml
+        params:
+          - name: env
+            label: Tag environment
+            path: spec.tracing.0.customTags.environment.literal.value
+          - name: sampling
+            label: "% de amostragem da mesh"
+            type: number
+            path: spec.tracing.0.randomSamplingPercentage
+      - path: manifests/05b-tracing-sampling.yaml
+        params:
+          - name: sampling
+            label: "% de amostragem do sandbox"
+            type: number
+            path: spec.tracing.0.randomSamplingPercentage
+    actions:
+      - label: Restaurar a Telemetry da mesh (Zipkin, 100%)
+        run: |-
+          kubectl apply -f ../00-setup/manifests/telemetry.yaml
+    tests:
+      - title: Traces recentes do productpage
+        chart: true
+        cases:
+          - label: 10 requisições → spans e serviços por trace
+            run: |
+              . ./helpers.sh
+              load 10; sleep 5
+              traces productpage.bookinfo 10 | sed 's/^[^ ]*  //' | sort | uniq -c | awk '{n=$1; $1=""; printf "%s : %d\n", substr($0, 2), n}'
+            tally: '^(.+) : (\d+)$'
+      - title: 5a — tags do span
+        cases:
+          - label: requisição com x-user alice
+            run: |
+              . ./helpers.sh
+              curl -s -o /dev/null -H 'x-user: alice' http://localhost/productpage; sleep 5
+              trace_tags productpage.bookinfo | grep -E '^(environment|user|otel\.scope\.name)=' | tr '\n' ' '
+      - title: 5b — amostragem
+        cases:
+          - label: traces de 10 chamadas ao httpbin.sandbox
+            run: |
+              . ./helpers.sh
+              id=trace-$$-$(date +%s)
+              kubectl -n sandbox exec deploy/curl -c curl -- sh -c "for i in \$(seq 10); do curl -s -o /dev/null http://httpbin:8000/anything/$id; done"
+              sleep 5
+              traces_with httpbin.sandbox "$id"
+
+  - title: 6. Dashboards no Grafana
+    summary: |
+      Abra o **Grafana** pela barra superior (pasta *Istio*): *Mesh* para a visão geral, *Service* para a visão do servidor, *Workload* para entrada e saída de um deployment, *Control Plane* para o istiod.
+      Gere tráfego, aplique as falhas no ratings e encontre o efeito em *Service* (ratings) e *Workload* (reviews-v2). Abra uma query no *Explore* e compare com as do exercício 2.
+    manifests:
+      - path: manifests/02-ratings-errors.yaml
+    actions:
+      - label: Gerar tráfego por 2 minutos
+        run: |-
+          end=$(( $(date +%s) + 120 )); n=0
+          while [ "$(date +%s)" -lt "$end" ]; do curl -s -o /dev/null http://localhost/productpage; n=$((n+1)); sleep 0.3; done
+          echo "$n requisições enviadas"

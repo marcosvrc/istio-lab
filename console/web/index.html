@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>istio-lab console</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⛵</span>
+      <strong>istio-lab</strong><span class="muted">console</span>
+    </div>
+    <div id="cluster" class="cluster" aria-live="polite"></div>
+    <nav id="dashboards" class="dashboards" aria-label="Dashboards"></nav>
+    <button id="log-toggle" class="btn ghost" aria-expanded="false" aria-controls="log">
+      Comandos <span id="log-count" class="pill">0</span>
+    </button>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar" class="sidebar" aria-label="Módulos e exercícios"></aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <section id="log" class="log" hidden aria-label="Comandos executados">
+    <div class="log-head">
+      <strong>Comandos executados</strong>
+      <span class="muted">tudo o que o console rodou no cluster, do mais recente ao mais antigo</span>
+      <button id="log-close" class="btn ghost small">Fechar</button>
+    </div>
+    <ol id="log-list" class="log-list" reversed></ol>
+  </section>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

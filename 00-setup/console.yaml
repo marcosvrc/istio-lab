@@ -1,0 +1,58 @@
+# Catálogo do Lab Console para o módulo 00 (veja ../console/README.md)
+title: Instalação e fundamentos
+summary: Saúde da instalação e os comandos de diagnóstico do `istioctl`.
+setup: install.sh
+
+exercises:
+  - title: Saúde da instalação
+    summary: |
+      Confere se o ingress, o Bookinfo e a comunicação dentro da mesh estão funcionando.
+      O Service `reviews` faz balanceamento entre v1, v2 e v3, então a distribuição deve ficar ~1/3 para cada.
+    tests:
+      - title: Bookinfo pelo ingress
+        cases:
+          - label: GET http://localhost/productpage
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://localhost/productpage
+            expect: "200"
+      - title: Versões do reviews (round-robin)
+        chart: true
+        cases:
+          - label: 30 requisições
+            run: |-
+              curl -s http://localhost/productpage | grep -oE 'reviews-v[0-9]' | head -1
+            repeat: 30
+      - title: Chamada dentro da mesh
+        cases:
+          - label: sandbox/curl → httpbin
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://httpbin:8000/get
+            expect: "200"
+
+  - title: Comandos de diagnóstico
+    summary: |
+      Os comandos que você vai usar em todo troubleshooting. Rode cada um e compare a saída com o que está aplicado.
+      Em `clusters`, procure os subsets `v1`, `v2` e `v3` do reviews, que vêm da DestinationRule.
+    actions:
+      - label: istioctl proxy-status
+        run: |-
+          istioctl proxy-status
+      - label: istioctl analyze (namespaces do lab)
+        run: |-
+          for ns in istio-system bookinfo sandbox; do istioctl analyze -n $ns; done
+      - label: Rotas HTTP do productpage (porta 9080)
+        run: |-
+          istioctl proxy-config routes deploy/productpage-v1 -n bookinfo --name 9080
+      - label: Clusters (upstreams) do productpage
+        run: |-
+          istioctl proxy-config clusters deploy/productpage-v1 -n bookinfo | grep -E 'SERVICE|bookinfo'
+      - label: Endpoints do reviews vistos pelo productpage
+        run: |-
+          istioctl proxy-config endpoints deploy/productpage-v1 -n bookinfo --cluster "outbound|9080||reviews.bookinfo.svc.cluster.local"
+      - label: Certificado (SPIFFE) do productpage
+        run: |-
+          istioctl proxy-config secret deploy/productpage-v1 -n bookinfo
+      - label: Últimas linhas do access log do productpage
+        run: |-
+          kubectl -n bookinfo logs deploy/productpage-v1 -c istio-proxy --tail=5
