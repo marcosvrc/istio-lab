@@ -1,0 +1,64 @@
+# Exercício 6b — por que o Istio usa "native sidecars" (Kubernetes 1.29+):
+# o istio-proxy vira um initContainer com restartPolicy: Always, que
+#  (1) sobe ANTES do app (o app já encontra a rede pronta) e
+#  (2) é encerrado DEPOIS do app (Jobs terminam sozinhos).
+# Os três Jobs fazem a mesma chamada ao httpbin logo ao iniciar.
+#   native         padrão: chamada ok, Job conclui
+#   classic        sidecar como container comum: a chamada pode falhar
+#                  (proxy ainda não está pronto) e o Job nunca conclui,
+#                  porque o istio-proxy continua rodando
+#   classic-hold   contorno antigo: holdApplicationUntilProxyStarts segura o
+#                  app até o proxy ficar pronto, e o app encerra o proxy
+#                  chamando /quitquitquit no fim
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-native
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: docker.io/curlimages/curl:8.16.0
+          command: ["sh", "-c", "curl -s -o /dev/null -m 5 -w 'httpbin respondeu %{http_code}\n' http://httpbin:8000/get"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-classic
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/nativeSidecar: "false"
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: docker.io/curlimages/curl:8.16.0
+          command: ["sh", "-c", "curl -s -o /dev/null -m 5 -w 'httpbin respondeu %{http_code}\n' http://httpbin:8000/get"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-classic-hold
+  namespace: sandbox
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/nativeSidecar: "false"
+        proxy.istio.io/config: |
+          holdApplicationUntilProxyStarts: true
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: docker.io/curlimages/curl:8.16.0
+          command: ["sh", "-c", "curl -s -o /dev/null -m 5 -w 'httpbin respondeu %{http_code}\n' http://httpbin:8000/get; curl -s -X POST http://localhost:15020/quitquitquit"]

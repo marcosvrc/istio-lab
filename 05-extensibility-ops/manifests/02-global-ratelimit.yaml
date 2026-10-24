@@ -1,0 +1,60 @@
+# Exercício 2 — rate limit GLOBAL no ingress gateway.
+# 1. O filtro envoy.filters.http.ratelimit pergunta ao serviço ratelimit
+#    (gRPC) se a requisição pode passar.
+# 2. As "actions" do virtual host httpbin.local:80 montam o descritor
+#    enviado: o valor do header x-user vira user=<valor>. Sem o header,
+#    não há descritor e a requisição não é limitada.
+# As regras (quantas por minuto) ficam em base/ratelimit-config.yaml.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: ingress-global-ratelimit
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingressgateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.ratelimit
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+            domain: httpbin
+            # serviço fora do ar → deixa passar (fail open)
+            failure_mode_deny: false
+            timeout: 1s
+            # devolve x-ratelimit-limit / x-ratelimit-remaining / x-ratelimit-reset
+            enable_x_ratelimit_headers: DRAFT_VERSION_03
+            rate_limit_service:
+              transport_api_version: V3
+              grpc_service:
+                envoy_grpc:
+                  cluster_name: outbound|8081||ratelimit.ratelimit.svc.cluster.local
+                  authority: ratelimit.ratelimit.svc.cluster.local
+    - applyTo: VIRTUAL_HOST
+      match:
+        context: GATEWAY
+        routeConfiguration:
+          vhost:
+            name: httpbin.local:80
+            route:
+              action: ANY
+      patch:
+        operation: MERGE
+        value:
+          rate_limits:
+            - actions:
+                - request_headers:
+                    header_name: x-user
+                    descriptor_key: user

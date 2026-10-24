@@ -1,0 +1,31 @@
+# Namespace e regras do serviço de rate limit global (envoyproxy/ratelimit).
+# O setup.sh instala o serviço e o Redis do sample do Istio neste namespace.
+# Os limites ficam no serviço, não no Envoy: todas as réplicas do ingress
+# consultam o mesmo contador (no Redis).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ratelimit
+  labels:
+    istio-injection: disabled
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: ratelimit
+data:
+  config.yaml: |
+    domain: httpbin
+    descriptors:
+      # um balde por valor do header x-user (o Envoy envia user=<valor>)
+      - key: user
+        rate_limit:
+          unit: minute
+          requests_per_unit: 3
+      # valor específico vence o genérico
+      - key: user
+        value: vip
+        rate_limit:
+          unit: minute
+          requests_per_unit: 10

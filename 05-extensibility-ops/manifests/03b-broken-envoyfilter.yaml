@@ -1,0 +1,32 @@
+# Exercício 3b — EnvoyFilter QUEBRADO de propósito: o campo "inline_strin"
+# não existe. O Kubernetes e o istiod aceitam (não validam o conteúdo do
+# patch), mas o Envoy rejeita a config (NACK) e continua com a anterior.
+# Num pod NOVO não há config anterior: ele nunca fica pronto.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: httpbin-broken
+  namespace: sandbox
+spec:
+  workloadSelector:
+    labels:
+      app: httpbin
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_strin: |
+                function envoy_on_request(req) end

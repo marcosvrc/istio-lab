@@ -50,7 +50,7 @@ O script:
 2. Reinstala o control plane com o perfil **ambient** (`ambient-operator.yaml`: istio-cni + ztunnel, ajustes para k3s), preservando o egress gateway se existir.
 3. Cria o namespace `ambient` (label `istio.io/dataplane-mode=ambient`) com httpbin, httpbin-v2 e curl, e o namespace `outside` (fora da mesh) com curl.
 
-> **Rancher Desktop (runtime dockerd):** o istio-cni entra em CrashLoop com `path /var/run/netns is mounted on /run but it is not a shared or slave mount`. A correção é `rdctl shell sudo mount --make-shared /run`, que o `setup.sh` aplica, mas ela **se perde quando a VM reinicia**. Depois de reiniciar o Rancher, rode o `setup.sh` de novo. Para tornar permanente (não testado neste lab), crie `~/Library/Application Support/rancher-desktop/lima/_config/override.yaml`:
+> **Rancher Desktop (runtime dockerd):** o istio-cni entra em CrashLoop com `path /var/run/netns is mounted on /run but it is not a shared or slave mount`. A correção é `rdctl shell sudo mount --make-shared /run`, que o `setup.sh` aplica, mas ela **se perde quando a VM reinicia**. Depois de reiniciar o Rancher, rode o `setup.sh` de novo. Os pods que subiram enquanto o istio-cni estava quebrado ficam presos no init container `istio-validation` (`iptables validation failed`) e precisam ser recriados: `kubectl -n bookinfo delete pod --all` (o `setup.sh` do módulo 05 faz isso para todos os namespaces). Para tornar permanente (não testado neste lab), crie `~/Library/Application Support/rancher-desktop/lima/_config/override.yaml`:
 >
 > ```yaml
 > provision:

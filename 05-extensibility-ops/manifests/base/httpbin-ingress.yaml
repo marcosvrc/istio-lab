@@ -1,0 +1,34 @@
+# Expõe o httpbin em http://localhost com Host httpbin.local (rate limit
+# global e WasmPlugin). Mesmos nomes dos módulos 01 e 02.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: httpbin-gateway
+  namespace: sandbox
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - httpbin.local
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: httpbin-ingress
+  namespace: sandbox
+spec:
+  hosts:
+    - httpbin.local
+  gateways:
+    - httpbin-gateway
+  http:
+    - route:
+        - destination:
+            host: httpbin
+            port:
+              number: 8000

@@ -1,0 +1,35 @@
+# Exercício 6a — ajuste do sidecar por workload, via anotações no pod:
+#  - recursos do container istio-proxy (o padrão vem de values.global.proxy)
+#  - concurrency: threads de trabalho do Envoy (padrão = 2 neste perfil;
+#    0 = uma por CPU do nó). Menos threads = menos memória.
+#  - terminationDrainDuration: quanto tempo o Envoy espera conexões
+#    terminarem ao receber SIGTERM.
+# Compare com o httpbin original.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin-tuned
+  namespace: sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbin-tuned
+  template:
+    metadata:
+      labels:
+        app: httpbin-tuned
+      annotations:
+        sidecar.istio.io/proxyCPU: 20m
+        sidecar.istio.io/proxyMemory: 32Mi
+        sidecar.istio.io/proxyCPULimit: 500m
+        sidecar.istio.io/proxyMemoryLimit: 128Mi
+        proxy.istio.io/config: |
+          concurrency: 1
+          terminationDrainDuration: 10s
+    spec:
+      containers:
+        - name: httpbin
+          image: docker.io/mccutchen/go-httpbin:v2.15.0
+          ports:
+            - containerPort: 8080

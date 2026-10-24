@@ -1,0 +1,40 @@
+# Exercício 3a — EnvoyFilter com um filtro Lua no sidecar do httpbin:
+#  - na ida, adiciona o header x-lua-request (o httpbin o devolve em /headers)
+#  - na volta, adiciona x-lua-response com o tempo do backend
+# Para algo tão simples, prefira a API do Istio (headers no VirtualService).
+# Aqui o objetivo é ver o mecanismo: onde o patch entra e como inspecionar.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: httpbin-lua
+  namespace: sandbox
+spec:
+  workloadSelector:
+    labels:
+      app: httpbin
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                function envoy_on_request(req)
+                  req:headers():add("x-lua-request", "istio-lab")
+                  req:streamInfo():dynamicMetadata():set("lab", "start", os.clock())
+                end
+                function envoy_on_response(resp)
+                  local start = resp:streamInfo():dynamicMetadata():get("lab")["start"]
+                  resp:headers():add("x-lua-response", string.format("%.1fms", (os.clock() - start) * 1000))
+                end

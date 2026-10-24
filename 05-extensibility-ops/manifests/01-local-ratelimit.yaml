@@ -1,0 +1,51 @@
+# Exercício 1 — rate limit LOCAL no sidecar do httpbin (lado do servidor).
+# Cada Envoy tem o seu balde de tokens: com 3 réplicas, o limite efetivo
+# triplica. Não há API do Istio para isso, então é um EnvoyFilter que insere
+# o filtro envoy.filters.http.local_ratelimit na cadeia HTTP de entrada.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: httpbin-local-ratelimit
+  namespace: sandbox
+spec:
+  workloadSelector:
+    labels:
+      app: httpbin
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            stat_prefix: http_local_rate_limiter
+            # 10 requisições a cada 30s; o balde enche de uma vez a cada fill_interval
+            token_bucket:
+              max_tokens: 10
+              tokens_per_fill: 10
+              fill_interval: 30s
+            # enabled = conta os tokens; enforced = responde 429 (0% = modo "shadow")
+            filter_enabled:
+              runtime_key: local_rate_limit_enabled
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            filter_enforced:
+              runtime_key: local_rate_limit_enforced
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+            response_headers_to_add:
+              - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                header:
+                  key: x-local-rate-limit
+                  value: "true"

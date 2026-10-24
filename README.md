@@ -96,7 +96,7 @@ Prioridade: ⭐ essencial · ◆ importante · ○ avançado/opcional
 | [02-security](02-security/) | ✅ pronto |
 | [03-observability](03-observability/) | ✅ pronto |
 | [04-ambient](04-ambient/) | ✅ pronto |
-| 05-extensibility-ops | planejado |
+| [05-extensibility-ops](05-extensibility-ops/) | ✅ pronto |
 | 06-advanced | planejado |
 
 Cada módulo tem `setup.sh` (pré-requisitos), `reset.sh` (volta ao estado inicial) e um `README.md` com os exercícios. Comece por `00-setup/install.sh`.

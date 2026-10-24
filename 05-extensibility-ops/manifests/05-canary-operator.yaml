@@ -1,0 +1,16 @@
+# Exercício 5 — control plane canário: um segundo istiod, na versão nova,
+# ao lado do atual. Instale com o istioctl da versão NOVA (bin/istioctl):
+#   bin/istioctl install -y -f ../00-setup/istio-operator.yaml -f manifests/05-canary-operator.yaml
+#
+# Reaproveita a meshConfig do lab (providers de tracing, logs, ext-authz) e
+# instala só o istiod da revisão 1-31-3. Gateways, istio-cni e ztunnel ficam
+# com o control plane atual.
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: minimal
+  revision: 1-31-3
+  components:
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: false

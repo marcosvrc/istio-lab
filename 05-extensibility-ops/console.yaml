@@ -1,0 +1,273 @@
+# Catálogo do Lab Console para o módulo 05 (veja ../console/README.md)
+# O exercício 5 usa bin/istioctl (1.31.3, baixado pelo setup.sh). Ele não é
+# a função istioctl do console, então recebe o contexto via $KUBE_CONTEXT.
+title: Extensibilidade e operação
+summary: Rate limiting, EnvoyFilter, WasmPlugin, upgrade canário do control plane e tuning do sidecar.
+setup: setup.sh
+reset: reset.sh
+
+exercises:
+  - title: 1. Rate limit local
+    summary: |
+      Um EnvoyFilter insere o filtro `local_ratelimit` no sidecar do httpbin: 10 tokens a cada 30s, **por Envoy** (3 réplicas = 3 baldes).
+      O servidor registra a flag `RL`, e o cliente só vê um 429 vindo do upstream. Com "% bloqueado" em 0, o filtro roda em modo *shadow*.
+    manifests:
+      - path: manifests/01-local-ratelimit.yaml
+        params:
+          - name: tokens
+            label: Tokens no balde
+            type: number
+            path: spec.configPatches.0.patch.value.typed_config.token_bucket.max_tokens
+          - name: fill
+            label: Tokens por recarga
+            type: number
+            path: spec.configPatches.0.patch.value.typed_config.token_bucket.tokens_per_fill
+          - name: interval
+            label: Intervalo de recarga
+            path: spec.configPatches.0.patch.value.typed_config.token_bucket.fill_interval
+            hint: "ex.: 30s, 1m"
+          - name: enforced
+            label: "% bloqueado (enforced)"
+            type: number
+            path: spec.configPatches.0.patch.value.typed_config.filter_enforced.default_value.numerator
+            hint: 0 = só conta (shadow), 100 = responde 429
+    tests:
+      - title: Rajada de requisições
+        chart: true
+        cases:
+          - label: 15 requisições seguidas a httpbin
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://httpbin:8000/get
+            repeat: 15
+      - title: Quem limitou
+        chart: true
+        cases:
+          - label: access log do servidor (httpbin), último minuto
+            run: |-
+              kubectl -n sandbox logs deploy/httpbin -c istio-proxy --since=1m | grep '"GET /get' | awk '{printf "%s %s %s : 1\n", $5, $6, $7}'
+            tally: '^(.+) : (\d+)$'
+          - label: access log do cliente (curl), último minuto
+            run: |-
+              kubectl -n sandbox logs deploy/curl -c istio-proxy --since=1m | grep '"GET /get' | awk '{printf "%s %s %s : 1\n", $5, $6, $7}'
+            tally: '^(.+) : (\d+)$'
+
+  - title: 2. Rate limit global
+    summary: |
+      O ingress consulta o serviço `ratelimit` (gRPC, contador no Redis). O header `x-user` vira o descritor `user=<valor>`: 3/min por usuário, e 10/min para `vip`. Sem o header não há descritor, e a requisição não é limitada.
+      Os contadores duram 1 minuto: espere para repetir. Derrube o serviço e veja o **fail open** (`failure_mode_deny: false`).
+    manifests:
+      - path: manifests/base/ratelimit-config.yaml
+        note: regras do serviço (aplicado pelo setup; mudanças levam ~1 min para valer)
+      - path: manifests/02-global-ratelimit.yaml
+    actions:
+      - label: Regras atuais do serviço
+        run: |-
+          kubectl -n ratelimit get cm ratelimit-config -o jsonpath='{.data.config\.yaml}'
+      - label: Derrubar o serviço de rate limit
+        run: |-
+          kubectl -n ratelimit scale deploy ratelimit --replicas=0
+      - label: Religar o serviço de rate limit
+        run: |-
+          kubectl -n ratelimit scale deploy ratelimit --replicas=1 && kubectl -n ratelimit rollout status deploy ratelimit
+    tests:
+      - title: Requisições a httpbin.local por usuário
+        chart: true
+        cases:
+          - label: x-user alice (5×)
+            before: |
+              U=alice-$(date +%H%M)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H "x-user: $U" http://localhost/get
+            repeat: 5
+          - label: x-user vip (5×)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' -H 'x-user: vip' http://localhost/get
+            repeat: 5
+          - label: sem x-user (5×)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' http://localhost/get
+            repeat: 5
+          - label: Bookinfo (fora do virtual host)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://localhost/productpage
+            repeat: 5
+      - title: Headers de rate limit
+        cases:
+          - label: x-ratelimit-* para um usuário novo
+            run: |-
+              curl -s -D - -o /dev/null -H 'Host: httpbin.local' -H "x-user: novo-$(date +%s)" http://localhost/get | grep -i '^x-ratelimit' | tr -d '\r' | paste -sd' ' -
+
+  - title: 3. EnvoyFilter — Lua e um patch errado
+    summary: |
+      3a adiciona headers com um filtro Lua (na ida e na volta). Espere ~10s depois de aplicar. 3b tem um erro de digitação: o Kubernetes e o istiod aceitam, o Envoy rejeita (**NACK**) e mantém a config anterior.
+      O perigo é o **próximo pod**: sem config anterior, ele trava em `Init:1/2`. Aplique o 3b, reinicie o httpbin e veja. Remova o 3b para o rollout completar.
+    manifests:
+      - path: manifests/03a-lua-headers.yaml
+      - path: manifests/03b-broken-envoyfilter.yaml
+    actions:
+      - label: Cadeia de filtros HTTP do httpbin (entrada)
+        run: |-
+          istioctl proxy-config listeners deploy/httpbin -n sandbox --port 15006 -o json | jq -r 'first(.. | objects | select(has("httpFilters"))) | [.httpFilters[].name] | join(" → ")'
+      - label: ACK ERROR no istiod (último minuto)
+        run: |-
+          kubectl -n istio-system logs deploy/istiod --since=1m | grep 'ACK ERROR' | tail -2 || echo "nenhum NACK no último minuto"
+      - label: istioctl analyze -n sandbox
+        run: |-
+          istioctl analyze -n sandbox
+      - label: Reiniciar o httpbin (cria um pod novo)
+        run: |-
+          kubectl -n sandbox rollout restart deploy/httpbin && sleep 30 && kubectl -n sandbox get pods -l app=httpbin
+      - label: Por que o pod novo não fica pronto
+        run: |-
+          P=$(kubectl -n sandbox get pod -l app=httpbin --sort-by=.metadata.creationTimestamp -o name | tail -1)
+          kubectl -n sandbox get "$P"; kubectl -n sandbox logs "$P" -c istio-proxy --tail=30 | grep 'NOT ready' | tail -1
+    tests:
+      - title: Efeito do filtro Lua
+        cases:
+          - label: header de resposta x-lua-response
+            in: sandbox
+            run: |-
+              curl -s -D - -o /dev/null http://httpbin:8000/get | grep -i '^x-lua-response' | tr -d '\r'
+          - label: header de requisição visto pelo httpbin
+            in: sandbox
+            run: |-
+              curl -s http://httpbin:8000/headers | grep -A1 '"X-Lua-Request"' | tail -1 | tr -d ' "[]'
+      - title: Pods do httpbin
+        cases:
+          - label: status (READY e STATUS)
+            run: |-
+              kubectl -n sandbox get pods -l app=httpbin --no-headers | awk '{printf "%s %s  ", $2, $3}'
+
+  - title: 4. WasmPlugin
+    summary: |
+      O `istio-agent` baixa o módulo Wasm (imagem OCI do ghcr.io) e o entrega ao Envoy, sem EnvoyFilter. O plugin exige Basic Auth no prefixo configurado, para GET e POST.
+      Espere ~15s depois de aplicar: antes de o módulo carregar, o tráfego passa.
+    manifests:
+      - path: manifests/04-wasm-basic-auth.yaml
+        params:
+          - name: prefix
+            label: Prefixo protegido
+            path: spec.pluginConfig.basic_auth_rules.0.prefix
+          - name: cred
+            label: Credencial (usuário:senha)
+            path: spec.pluginConfig.basic_auth_rules.0.credentials.0
+    actions:
+      - label: Download do módulo no istio-agent
+        run: |-
+          kubectl -n sandbox logs deploy/httpbin -c istio-proxy | grep -i wasm | tail -3
+    tests:
+      - title: Requisições ao httpbin
+        cases:
+          - label: /anything/admin sem credencial
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://httpbin:8000/anything/admin
+          - label: /anything/admin com admin:istio-lab
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -u admin:istio-lab http://httpbin:8000/anything/admin
+          - label: /anything/admin com senha errada
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -u admin:errada http://httpbin:8000/anything/admin
+          - label: DELETE /anything/admin (método fora da regra)
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -X DELETE http://httpbin:8000/anything/admin
+          - label: /get (fora do prefixo)
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://httpbin:8000/get
+          - label: pelo ingress (httpbin.local)
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' -H 'Host: httpbin.local' http://localhost/anything/admin
+
+  - title: 5. Upgrade canário do control plane
+    summary: |
+      Siga as ações em ordem: um segundo istiod (**1.31.3**) sobe ao lado do atual (1.31.0). As revision tags `prod-stable` e `prod-canary` apontam para as revisões, e os namespaces apontam para as tags.
+      Para promover, mude o alvo da tag e reinicie os pods, sem mexer nas labels. O rollback é a última ação: ele volta tudo para o 1.31.0, que os outros módulos esperam.
+    actions:
+      - label: 1. Precheck da versão nova
+        run: |-
+          bin/istioctl --context "$KUBE_CONTEXT" x precheck
+      - label: 2. Instalar o istiod canário (1.31.3)
+        run: |-
+          bin/istioctl --context "$KUBE_CONTEXT" install -y -f ../00-setup/istio-operator.yaml -f manifests/05-canary-operator.yaml && kubectl -n istio-system get deploy -l app=istiod
+      - label: 3. Criar as tags e associar sandbox (stable) e bookinfo (canary)
+        run: |
+          bin/istioctl --context "$KUBE_CONTEXT" tag set prod-stable --revision default --overwrite
+          bin/istioctl --context "$KUBE_CONTEXT" tag set prod-canary --revision 1-31-3 --overwrite
+          kubectl label ns sandbox istio-injection- istio.io/rev=prod-stable --overwrite
+          kubectl label ns bookinfo istio-injection- istio.io/rev=prod-canary --overwrite
+          bin/istioctl --context "$KUBE_CONTEXT" tag list
+      - label: 4. Mover o Bookinfo (reiniciar os pods)
+        run: |
+          kubectl -n bookinfo rollout restart deploy
+          for d in $(kubectl -n bookinfo get deploy -o name); do kubectl -n bookinfo rollout status "$d" --timeout=180s; done
+      - label: 5. Promover (prod-stable → 1-31-3) e reiniciar o sandbox
+        run: |
+          bin/istioctl --context "$KUBE_CONTEXT" tag set prod-stable --revision 1-31-3 --overwrite
+          kubectl -n sandbox rollout restart deploy
+          for d in $(kubectl -n sandbox get deploy -o name); do kubectl -n sandbox rollout status "$d" --timeout=180s; done
+          bin/istioctl --context "$KUBE_CONTEXT" tag list
+      - label: Tags e revisões
+        run: |-
+          bin/istioctl --context "$KUBE_CONTEXT" tag list; kubectl -n istio-system get deploy -l app=istiod
+      - label: 6. Rollback e remoção do canário (reset do módulo)
+        run: |-
+          ./reset.sh
+    tests:
+      - title: Proxies por namespace e versão
+        chart: true
+        cases:
+          - label: proxy-status das duas revisões
+            run: |
+              for rev in default 1-31-3; do
+                bin/istioctl --context "$KUBE_CONTEXT" proxy-status --revision "$rev" 2>/dev/null | awk 'NR>1 {ns=$1; sub(/^[^.]*\./, "", ns); print ns " @ " $4}'
+              done | sort | uniq -c | awk '{printf "%s %s %s : %d\n", $2, $3, $4, $1}'
+            tally: '^(.+) : (\d+)$'
+      - title: Tráfego entre versões
+        cases:
+          - label: ingress → productpage
+            run: |-
+              curl -s -o /dev/null -w '%{http_code}' http://localhost/productpage
+          - label: sandbox/curl → productpage.bookinfo
+            in: sandbox
+            run: |-
+              curl -s -o /dev/null -m 5 -w '%{http_code}' http://productpage.bookinfo:9080/productpage
+
+  - title: 6. Tuning do sidecar
+    summary: |
+      6a ajusta, por anotações no pod, os recursos do `istio-proxy`, o `concurrency` (threads do Envoy) e o `terminationDrainDuration`. Compare com o httpbin original.
+      6b mostra o que os **native sidecars** resolvem: o Job `classic` (sidecar comum) roda antes de o proxy estar pronto e nunca termina. O `classic-hold` usa os contornos antigos (`holdApplicationUntilProxyStarts` + `/quitquitquit`).
+    manifests:
+      - path: manifests/06a-proxy-tuning.yaml
+      - path: manifests/06b-jobs-sidecar.yaml
+    actions:
+      - label: Recriar os Jobs
+        run: |-
+          kubectl delete -f manifests/06b-jobs-sidecar.yaml --ignore-not-found && kubectl apply -f manifests/06b-jobs-sidecar.yaml
+      - label: Memória dos sidecars no sandbox
+        run: |-
+          kubectl top pods -n sandbox --containers | grep -E 'NAME|istio-proxy'
+    tests:
+      - title: 6a — httpbin × httpbin-tuned
+        cases:
+          - label: httpbin (padrão)
+            run: |-
+              echo "$(kubectl -n sandbox get pod -l app=httpbin -o json | jq -c '[.items[0].spec.initContainers[] | select(.name=="istio-proxy") | .resources][0]') concurrency=$(kubectl -n sandbox exec deploy/httpbin -c istio-proxy -- pilot-agent request GET server_info 2>/dev/null | jq .command_line_options.concurrency)"
+          - label: httpbin-tuned
+            run: |-
+              echo "$(kubectl -n sandbox get pod -l app=httpbin-tuned -o json | jq -c '[.items[0].spec.initContainers[] | select(.name=="istio-proxy") | .resources][0]') concurrency=$(kubectl -n sandbox exec deploy/httpbin-tuned -c istio-proxy -- pilot-agent request GET server_info 2>/dev/null | jq .command_line_options.concurrency)"
+      - title: 6b — Jobs (espere ~30s depois de aplicar)
+        cases:
+          - label: job-native
+            run: |-
+              ok=$(kubectl -n sandbox get job job-native -o jsonpath='{.status.succeeded}'); st="não terminou"; [ "$ok" = 1 ] && st=Complete; echo "$st · $(kubectl -n sandbox logs job/job-native -c job | head -1)"
+          - label: job-classic
+            run: |-
+              ok=$(kubectl -n sandbox get job job-classic -o jsonpath='{.status.succeeded}'); st="não terminou"; [ "$ok" = 1 ] && st=Complete; echo "$st · $(kubectl -n sandbox logs job/job-classic -c job | head -1)"
+          - label: job-classic-hold
+            run: |-
+              ok=$(kubectl -n sandbox get job job-classic-hold -o jsonpath='{.status.succeeded}'); st="não terminou"; [ "$ok" = 1 ] && st=Complete; echo "$st · $(kubectl -n sandbox logs job/job-classic-hold -c job | head -1)"
