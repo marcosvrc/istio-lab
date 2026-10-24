@@ -1,0 +1,46 @@
+# Exercício 1 — canary com Argo Rollouts e Istio.
+# O Rollout substitui o Deployment. A cada mudança no template (ex.: a
+# imagem), ele cria um ReplicaSet "canary" e segue os passos abaixo,
+# ajustando os pesos do VirtualService:
+#   20% → pausa até alguém promover → 50% (30s) → 80% (30s) → 100%
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: rollouts-demo
+  template:
+    metadata:
+      labels:
+        app: rollouts-demo
+    spec:
+      containers:
+        - name: rollouts-demo
+          # troque a cor para iniciar um rollout: blue, yellow, green, purple, orange, red
+          image: docker.io/argoproj/rollouts-demo:blue
+          ports:
+            - containerPort: 8080
+  strategy:
+    canary:
+      trafficRouting:
+        istio:
+          virtualService:
+            name: rollouts-demo
+            routes:
+              - primary
+          destinationRule:
+            name: rollouts-demo
+            stableSubsetName: stable
+            canarySubsetName: canary
+      steps:
+        - setWeight: 20
+        - pause: {}
+        - setWeight: 50
+        - pause: {duration: 30s}
+        - setWeight: 80
+        - pause: {duration: 30s}

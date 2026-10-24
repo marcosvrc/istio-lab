@@ -1,0 +1,46 @@
+# Exercício 2 — critérios de sucesso do canário, avaliados no Prometheus da
+# mesh com as métricas que o Istio gera (módulo 03). Visão do CLIENTE
+# (reporter="source"), que inclui erros gerados pelo próprio Envoy.
+# O Rollouts roda a query a cada "interval"; mais de "failureLimit" falhas
+# abortam. Com as duas condições declaradas, um resultado vazio (sem
+# tráfego, Prometheus fora) não é sucesso nem falha: é "Inconclusive", e
+# o rollout pausa esperando uma decisão humana.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: rollouts
+spec:
+  metrics:
+    - name: success-rate
+      interval: 20s
+      count: 6
+      failureLimit: 1
+      successCondition: len(result) > 0 && result[0] >= 0.95
+      failureCondition: len(result) > 0 && result[0] < 0.95
+      provider:
+        prometheus:
+          address: http://prometheus.istio-system:9090
+          query: |
+            sum(rate(istio_requests_total{reporter="source",destination_service_name="rollouts-demo",response_code!~"5.."}[30s]))
+            /
+            sum(rate(istio_requests_total{reporter="source",destination_service_name="rollouts-demo"}[30s]))
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: latency-p90
+  namespace: rollouts
+spec:
+  metrics:
+    - name: latency-p90
+      interval: 20s
+      count: 6
+      failureLimit: 1
+      successCondition: len(result) > 0 && result[0] < 500
+      failureCondition: len(result) > 0 && result[0] >= 500
+      provider:
+        prometheus:
+          address: http://prometheus.istio-system:9090
+          query: |
+            histogram_quantile(0.9, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="rollouts-demo"}[30s])) by (le))

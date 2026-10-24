@@ -1,0 +1,24 @@
+# Tráfego contínuo (~10 req/s) para o rollouts-demo, de dentro da mesh: é
+# dele que vêm as métricas que a análise do canário consulta no Prometheus.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: rollouts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: docker.io/curlimages/curl:8.16.0
+          command:
+            - sh
+            - -c
+            - while true; do curl -s -o /dev/null -m 5 http://rollouts-demo:8080/color; sleep 0.1; done

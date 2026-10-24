@@ -56,6 +56,7 @@ O console escuta só em `127.0.0.1` e executa apenas o que está nos catálogos 
 | 03-observability | os 6 exercícios: métricas como gráfico (cliente × servidor), SLIs, access logs e traces |
 | 04-ambient | os 7 exercícios, incluindo a migração do Bookinfo passo a passo |
 | 05-extensibility-ops | os 6 exercícios, incluindo o upgrade canário completo (instalar, promover e fazer rollback) |
+| 06-advanced | parte 1: canary com Argo Rollouts, análise automática e preview por header |
 
 No módulo 03, os testes usam as funções de `03-observability/helpers.sh` (`promql`, `traces`...), que exigem `jq`. Resultados do Prometheus dependem do intervalo de coleta: depois de gerar tráfego, espere ~20s.
 

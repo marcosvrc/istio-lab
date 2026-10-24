@@ -1,0 +1,52 @@
+# Exercício 3 — preview por header antes de qualquer peso: o Rollouts cria no
+# VirtualService uma rota "preview" (acima da "primary") que manda para o
+# canary só quem envia x-canary: true. Os usuários continuam 100% no stable
+# até alguém promover. A rota é removida no fim do rollout.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: rollouts-demo
+  template:
+    metadata:
+      labels:
+        app: rollouts-demo
+    spec:
+      containers:
+        - name: rollouts-demo
+          image: docker.io/argoproj/rollouts-demo:green
+          ports:
+            - containerPort: 8080
+  strategy:
+    canary:
+      trafficRouting:
+        managedRoutes:
+          - name: preview
+        istio:
+          virtualService:
+            name: rollouts-demo
+            routes:
+              - primary
+          destinationRule:
+            name: rollouts-demo
+            stableSubsetName: stable
+            canarySubsetName: canary
+      steps:
+        # sobe o canary sem tráfego de usuários (só para a rota por header)
+        - setCanaryScale:
+            replicas: 1
+        - setHeaderRoute:
+            name: preview
+            match:
+              - headerName: x-canary
+                headerValue:
+                  exact: "true"
+        - pause: {}
+        - setWeight: 50
+        - pause: {duration: 30s}

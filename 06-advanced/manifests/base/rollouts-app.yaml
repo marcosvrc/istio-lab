@@ -1,0 +1,78 @@
+# App do exercício de progressive delivery (namespace rollouts, com sidecar).
+# O Argo Rollouts controla o tráfego editando os pesos da rota "primary" do
+# VirtualService e os labels dos subsets da DestinationRule: não edite
+# esses campos à mão durante um rollout.
+# A UI do rollouts-demo (quadradinhos coloridos) fica em http://rollouts.local
+# (adicione "127.0.0.1 rollouts.local" ao /etc/hosts).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rollouts
+  labels:
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  selector:
+    app: rollouts-demo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# Os subsets começam sem labels; o Rollouts acrescenta o
+# rollouts-pod-template-hash de cada versão.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  host: rollouts-demo
+  subsets:
+    - name: stable
+    - name: canary
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: rollouts-gateway
+  namespace: rollouts
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - rollouts.local
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  hosts:
+    - rollouts-demo
+    - rollouts.local
+  gateways:
+    - mesh
+    - rollouts-gateway
+  http:
+    - name: primary
+      route:
+        - destination:
+            host: rollouts-demo
+            subset: stable
+          weight: 100
+        - destination:
+            host: rollouts-demo
+            subset: canary
+          weight: 0

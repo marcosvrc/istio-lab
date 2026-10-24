@@ -97,7 +97,7 @@ Prioridade: ⭐ essencial · ◆ importante · ○ avançado/opcional
 | [03-observability](03-observability/) | ✅ pronto |
 | [04-ambient](04-ambient/) | ✅ pronto |
 | [05-extensibility-ops](05-extensibility-ops/) | ✅ pronto |
-| 06-advanced | planejado |
+| [06-advanced](06-advanced/) | 🟡 parte 1 pronta (progressive delivery); GitOps, locality e multi-cluster planejados |
 
 Cada módulo tem `setup.sh` (pré-requisitos), `reset.sh` (volta ao estado inicial) e um `README.md` com os exercícios. Comece por `00-setup/install.sh`.
 

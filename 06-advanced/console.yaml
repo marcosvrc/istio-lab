@@ -1,0 +1,128 @@
+# Catálogo do Lab Console para o módulo 06 (veja ../console/README.md)
+# Parte 1 — progressive delivery. O plugin bin/kubectl-argo-rollouts não é
+# a função kubectl do console, então recebe o contexto via $KUBE_CONTEXT.
+title: Avançado — progressive delivery
+summary: Canary automatizado com Argo Rollouts, pesos no VirtualService e análise pelas métricas do Istio.
+setup: setup.sh
+reset: reset.sh
+
+exercises:
+  - title: 1. Canary em passos (Argo Rollouts)
+    summary: |
+      Troque a imagem e aplique: o Rollout cria o canary e para em 20% até alguém promover. Depois segue 50% → 80% → 100%, 30s em cada passo.
+      Com Istio, o peso é exato e independe do número de réplicas: o Rollouts edita a rota `primary` do VirtualService.
+    manifests:
+      - path: manifests/01-rollout-canary.yaml
+        params:
+          - name: image
+            label: Imagem
+            path: spec.template.spec.containers.0.image
+            hint: docker.io/argoproj/rollouts-demo:<cor> (blue, yellow, green, purple, orange, red)
+    actions:
+      - label: Status do rollout
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts get rollout rollouts-demo --no-color
+      - label: Promover (próximo passo)
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts promote rollouts-demo
+      - label: Abortar (100% de volta ao stable)
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts abort rollouts-demo
+      - label: Subsets da DestinationRule
+        run: |-
+          kubectl -n rollouts get dr rollouts-demo -o jsonpath='{range .spec.subsets[*]}{.name}: {.labels}{"\n"}{end}'
+    tests:
+      - title: Quem responde
+        chart: true
+        cases:
+          - label: 50 requisições de dentro da mesh
+            in: sandbox
+            run: |-
+              curl -s http://rollouts-demo.rollouts:8080/color | tr -d '"'
+            repeat: 50
+      - title: Estado
+        cases:
+          - label: pesos do VirtualService
+            run: |-
+              kubectl -n rollouts get vs rollouts-demo -o jsonpath='{range .spec.http[*]}{.name}: {range .route[*]}{.destination.subset}={.weight} {end}{end}'
+          - label: fase e passo do rollout
+            run: |-
+              kubectl -n rollouts get rollout rollouts-demo -o jsonpath='{.status.phase} · passo {.status.currentStepIndex} · {.status.message}'
+
+  - title: 2. Análise automática
+    summary: |
+      Aplique os templates e o Rollout com análise (mesma imagem: nada muda). Depois troque a imagem: `bad-red` (quase só 500) e `slow-yellow` (2s) devem ser **abortadas sozinhas** em ~1–1,5 min; `green` chega a 100% sem intervenção.
+      A análise usa a visão do cliente (`reporter="source"`): taxa de sucesso >= 95% e p90 < 500ms, medidas a cada 20s.
+    manifests:
+      - path: manifests/02-analysis-templates.yaml
+      - path: manifests/02-rollout-analysis.yaml
+        params:
+          - name: image
+            label: Imagem
+            path: spec.template.spec.containers.0.image
+            hint: rollouts-demo:bad-red, :slow-yellow ou uma cor boa
+    actions:
+      - label: Status do rollout
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts get rollout rollouts-demo --no-color
+      - label: Medições da última análise
+        run: |-
+          kubectl -n rollouts get analysisrun --sort-by=.metadata.creationTimestamp
+          kubectl -n rollouts get analysisrun --sort-by=.metadata.creationTimestamp -o json | jq -r '.items[-1].status.metricResults[]? | "\(.name) (\(.phase)): " + ([.measurements[] | "\(.value)/\(.phase)"] | join(" "))'
+      - label: Valores atuais no Prometheus
+        run: |-
+          . ../03-observability/helpers.sh
+          echo "sucesso: $(promql 'sum(rate(istio_requests_total{reporter="source",destination_service_name="rollouts-demo",response_code!~"5.."}[30s])) / sum(rate(istio_requests_total{reporter="source",destination_service_name="rollouts-demo"}[30s]))' | cut -f1)"
+          echo "p90 (ms): $(promql 'histogram_quantile(0.9, sum(rate(istio_request_duration_milliseconds_bucket{reporter="source",destination_service_name="rollouts-demo"}[30s])) by (le))' | cut -f1)"
+    tests:
+      - title: Quem responde
+        chart: true
+        cases:
+          - label: 50 requisições de dentro da mesh
+            in: sandbox
+            run: |-
+              code=$(curl -s -o /tmp/c -w '%{http_code}' -m 5 http://rollouts-demo.rollouts:8080/color); echo "$(tr -d '"' < /tmp/c) $code"
+            repeat: 50
+      - title: Estado
+        cases:
+          - label: pesos do VirtualService
+            run: |-
+              kubectl -n rollouts get vs rollouts-demo -o jsonpath='{range .spec.http[*]}{.name}: {range .route[*]}{.destination.subset}={.weight} {end}{end}'
+          - label: fase do rollout
+            run: |-
+              kubectl -n rollouts get rollout rollouts-demo -o jsonpath='{.status.phase} · {.status.message}'
+
+  - title: 3. Preview por header
+    summary: |
+      Troque a imagem: o canary sobe com 1 pod e **sem tráfego de usuários**, e só quem envia `x-canary: true` chega nele (rota `preview` no VirtualService).
+      Promova para seguir com os pesos. No fim, o Rollouts remove a rota `preview`.
+    manifests:
+      - path: manifests/03-rollout-header-preview.yaml
+        params:
+          - name: image
+            label: Imagem
+            path: spec.template.spec.containers.0.image
+    actions:
+      - label: Status do rollout
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts get rollout rollouts-demo --no-color
+      - label: Promover
+        run: |-
+          bin/kubectl-argo-rollouts --context "$KUBE_CONTEXT" -n rollouts promote rollouts-demo
+      - label: Rotas do VirtualService
+        run: |-
+          kubectl -n rollouts get vs rollouts-demo -o json | jq -c '.spec.http[] | {name, match, route: [.route[] | "\(.destination.subset)=\(.weight // 100)"]}'
+    tests:
+      - title: Quem responde
+        chart: true
+        cases:
+          - label: sem header (20×)
+            in: sandbox
+            run: |-
+              curl -s http://rollouts-demo.rollouts:8080/color | tr -d '"'
+            repeat: 20
+          - label: com x-canary true (20×)
+            in: sandbox
+            run: |-
+              curl -s -H 'x-canary: true' http://rollouts-demo.rollouts:8080/color | tr -d '"'
+            repeat: 20

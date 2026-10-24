@@ -1,0 +1,49 @@
+# Exercício 2 — o mesmo Rollout, agora com análise automática: as
+# AnalysisTemplates rodam em segundo plano desde o primeiro passo. Se uma
+# falhar, o Rollouts aborta e devolve 100% do tráfego à versão estável.
+# Sem pausa manual: quem decide são as métricas.
+#   20% (60s) → 50% (60s) → 100%
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: rollouts-demo
+  namespace: rollouts
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: rollouts-demo
+  template:
+    metadata:
+      labels:
+        app: rollouts-demo
+    spec:
+      containers:
+        - name: rollouts-demo
+          # bad-<cor> responde 500 na maioria das vezes; slow-<cor> demora 2s
+          image: docker.io/argoproj/rollouts-demo:yellow
+          ports:
+            - containerPort: 8080
+  strategy:
+    canary:
+      trafficRouting:
+        istio:
+          virtualService:
+            name: rollouts-demo
+            routes:
+              - primary
+          destinationRule:
+            name: rollouts-demo
+            stableSubsetName: stable
+            canarySubsetName: canary
+      analysis:
+        startingStep: 1
+        templates:
+          - templateName: success-rate
+          - templateName: latency-p90
+      steps:
+        - setWeight: 20
+        - pause: {duration: 60s}
+        - setWeight: 50
+        - pause: {duration: 60s}
