@@ -150,3 +150,27 @@ func countDocs(content string) int {
 	}
 	return n
 }
+
+// resources lista kind/nome/namespace de cada documento do arquivo.
+func resources(docs []*yaml.Node) []Resource {
+	res := []Resource{}
+	for i := range docs {
+		r := Resource{}
+		if n, err := lookup(docs, i, "apiVersion"); err == nil {
+			r.APIVersion = n.Value
+		}
+		if n, err := lookup(docs, i, "kind"); err == nil {
+			r.Kind = n.Value
+		}
+		if n, err := lookup(docs, i, "metadata.name"); err == nil {
+			r.Name = n.Value
+		}
+		if n, err := lookup(docs, i, "metadata.namespace"); err == nil {
+			r.Namespace = n.Value
+		}
+		if r.Kind != "" {
+			res = append(res, r)
+		}
+	}
+	return res
+}

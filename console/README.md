@@ -3,17 +3,20 @@
 Interface web local para fazer os exercícios do lab de forma visual: aplicar e remover manifests com um clique, ajustar parâmetros (pesos, delays, timeouts...) sem editar YAML, rodar os testes e ver o resultado em gráfico, e acompanhar **cada comando** que o console executou no cluster.
 
 ```
-┌─ istio-lab console ────────── contexto rancher-desktop · Istio 1.31 · istio-system ok ─ Kiali↗ Grafana↗ … ┐
-│ 00 · Instalação         │ 01-traffic-management · Gerenciamento de tráfego                                  │
-│ 01 · Tráfego            │ 3. Canary por peso                                [Setup] [Reset] [↻]             │
-│   ● 1. Versão           │ ┌ manifests/03-reviews-canary.yaml ─────── aplicado ─ [Ver YAML] [Aplicar] [Remover] │
-│   ● 2. Header           │ │ Peso v1 [50]   Peso v3 [50]                                                    │
-│   ● 3. Canary  ◀        │ └──────────────────────────────────────────────────────────────────────────────── │
-│   ○ 4. Ingress          │ ┌ Distribuição ──────────────────────────────────────────── [Rodar de novo] ─────┐ │
-│ 02 · Segurança          │ │ reviews-v3  ███████████████████████▌        54 · 54%                            │ │
-│                         │ │ reviews-v1  ████████████████████            46 · 46%                            │ │
-└─────────────────────────┴──────────────────────────────────────────────────────────── [Comandos 12] ────────┘
+┌─ ☰ istio-lab console ──────────── ▤ rancher-desktop │ Istio 1.31 ambient │ ✓ istio-system │ ☾ │ >_ Comandos 12 ┐
+│ ▦ Visão geral             │ Visão geral › 01 · Gerenciamento de tráfego › 3. Canary por peso                    │
+│ MÓDULOS                   │ [EX] 3. Canary por peso  ○ Não aplicado          Atualizado 15:48 ↻  ‹ ›  [Ações ▾]  │
+│ 00 Instalação           › │ Ajuste os pesos (use valores que somem 100)…                                         │
+│ 01 Gerenciamento de …   ⌄ │ ─ Manifests 1 ─── Comandos ─── Testes 1 ─────────────────────────────────────────── │
+│   ○ 1. Roteamento…        │ ┌ manifests/03-reviews-canary.yaml           ○ Não aplicado [YAML] [Aplicar] [Remover] │
+│   ○ 3. Canary por peso ◀  │ │ [VS] reviews · bookinfo                                                         │
+│   ⚠ 4. Ingress…           │ │ Peso v1 [50] ↺   Peso v3 [50]                                                   │
+│ OBSERVABILIDADE           │ │ ┌ editor YAML (com destaque e números de linha) ─────────────────── Copiar ┐    │
+│ ↗ Kiali          :20001   │ │ │ 16  weight: 50                                                       │    │
+└───────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+O visual segue o do Kiali (PatternFly): barra superior e menu lateral escuros, cabeçalho de página com caminho, título e abas, cards e tabelas. Tem tema claro e escuro (segue o sistema; o botão ☾/☀ troca e lembra a escolha).
 
 ## Como rodar
 
@@ -36,13 +39,15 @@ O console escuta só em `127.0.0.1` e executa apenas o que está nos catálogos 
 
 | Área | O que faz |
 |---|---|
-| Barra superior | Contexto, versão do Istio, saúde do `istio-system` e botões que abrem **Kiali, Grafana, Jaeger, Prometheus e fortio** (o console cria e encerra o port-forward) |
-| Barra lateral | Módulos e exercícios. A bolinha mostra o estado dos manifests: verde = aplicado, amarela = parcial ou com outra config, cinza = não aplicado |
-| Manifests | Ver o YAML (com os parâmetros aplicados), **Aplicar** e **Remover**. Campos editados ficam destacados. O estado é comparado com o cluster via `kubectl diff` |
-| Comandos | Ações do exercício (`istioctl proxy-config`, escalar deployments, instalar o egress gateway...), com a saída na tela |
-| Testes | Rodam os mesmos comandos do README N vezes (localmente ou de dentro de um pod da mesh) e mostram a distribuição dos resultados e se bateu com o esperado. "script executado" mostra o comando exato |
-| Comandos executados | Histórico de tudo que o console rodou: `kubectl apply`, testes, port-forwards. Bom para aprender o equivalente em linha de comando |
-| Setup / Reset | Rodam o `setup.sh` / `reset.sh` do módulo |
+| Barra superior | Contexto, versão do Istio (e se o modo ambient está ativo) e a saúde do `istio-system`. Clicar na saúde abre a lista de componentes. O botão **Comandos** abre o histórico |
+| Menu lateral | **Visão geral**, os módulos (expansíveis, com os exercícios e o estado de cada um) e, em **Observabilidade**, os atalhos para **Kiali, Grafana, Jaeger, Prometheus e fortio** (o console cria e encerra o port-forward) |
+| Visão geral | Card do plano de controle e um card por módulo, com a contagem de exercícios por estado: ✓ aplicado, ⚠ parcial ou com outra config, ! erro, ○ não aplicado |
+| Página do módulo | Tabela de exercícios com o estado, os recursos de cada um (selos VS, DR, PA, AP… como no Kiali) e quantos comandos e testes há. **Ações** roda o `setup.sh` / `reset.sh` |
+| Página do exercício | Caminho, título, estado, ‹ › para o exercício anterior/próximo e abas **Manifests**, **Comandos** e **Testes** (a aba fica no endereço, ex.: `#/01-traffic-management/2/tests`) |
+| Manifests | Recursos do arquivo, **YAML** (editor com os parâmetros aplicados), **Aplicar** e **Remover**. Campos editados ficam destacados e ↺ volta ao valor do arquivo. O estado é comparado com o cluster via `kubectl diff` |
+| Comandos | Ações do exercício (`istioctl proxy-config`, escalar deployments, instalar o egress gateway...), com o comando à vista, botão de copiar e a saída na tela |
+| Testes | Rodam os mesmos comandos do README N vezes (localmente ou de dentro de um pod da mesh) e mostram a distribuição em barras (2xx verde, 4xx amarelo, 5xx vermelho) e se bateu com o esperado. "script executado" mostra o comando exato |
+| Comandos executados | Painel lateral com tudo que o console rodou: `kubectl apply`, testes, port-forwards. Filtro de falhas e botão de copiar. Bom para aprender o equivalente em linha de comando |
 
 > A config leva alguns segundos para chegar aos Envoys. Depois de aplicar, espere ~5s antes de testar. Se um resultado não bater, rode o teste de novo.
 
@@ -119,6 +124,6 @@ console/
   exec.go        execução de kubectl/istioctl/sh e o log de comandos
   tests.go       execução dos testes e agregação dos resultados
   dashboards.go  port-forwards para Kiali, Grafana, Jaeger, Prometheus e fortio
-  web/           interface (HTML/CSS/JS puros, embutidos no binário)
+  web/           interface (HTML/CSS/JS puros, embutidos no binário; sem build nem CDN)
   vendor/        dependência (gopkg.in/yaml.v3), para compilar sem baixar nada
 ```

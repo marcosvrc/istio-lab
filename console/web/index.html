@@ -7,33 +7,43 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">⛵</span>
-      <strong>istio-lab</strong><span class="muted">console</span>
+  <header class="masthead">
+    <button id="nav-toggle" class="btn plain inverse" aria-label="Mostrar ou ocultar o menu" aria-controls="nav" aria-expanded="true" data-icon="menu"></button>
+    <a class="brand" href="#/">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 1.5 3.5 18H11z" fill="#73bcf7"/>
+        <path d="M12.5 6 19.5 18h-7z" fill="#2b9af3"/>
+        <path d="M2.5 19.5h19l-2.2 3H4.7z" fill="#73bcf7"/>
+      </svg>
+      <span><strong>istio-lab</strong> <span class="brand-sub">console</span></span>
+    </a>
+    <div class="masthead-right">
+      <div id="cluster" class="cluster" aria-live="polite"></div>
+      <button id="theme-toggle" class="btn plain inverse" aria-label="Alternar tema claro/escuro" title="Alternar tema claro/escuro" data-icon="moon"></button>
+      <button id="log-toggle" class="btn plain inverse log-toggle" aria-expanded="false" aria-controls="log" title="Comandos executados">
+        <span data-icon="terminal"></span><span class="log-toggle-text">Comandos</span><span id="log-count" class="count">0</span>
+      </button>
     </div>
-    <div id="cluster" class="cluster" aria-live="polite"></div>
-    <nav id="dashboards" class="dashboards" aria-label="Dashboards"></nav>
-    <button id="log-toggle" class="btn ghost" aria-expanded="false" aria-controls="log">
-      Comandos <span id="log-count" class="pill">0</span>
-    </button>
   </header>
 
-  <div class="layout">
-    <aside id="sidebar" class="sidebar" aria-label="Módulos e exercícios"></aside>
+  <div class="page">
+    <nav id="nav" class="nav" aria-label="Módulos e exercícios"></nav>
     <main id="main" class="main"></main>
   </div>
 
-  <section id="log" class="log" hidden aria-label="Comandos executados">
-    <div class="log-head">
-      <strong>Comandos executados</strong>
-      <span class="muted">tudo o que o console rodou no cluster, do mais recente ao mais antigo</span>
-      <button id="log-close" class="btn ghost small">Fechar</button>
+  <aside id="log" class="drawer" hidden aria-label="Comandos executados">
+    <div class="drawer-head">
+      <div class="grow">
+        <strong>Comandos executados</strong>
+        <div class="muted small">tudo o que o console rodou, do mais recente ao mais antigo</div>
+      </div>
+      <button id="log-close" class="btn plain" aria-label="Fechar" data-icon="close"></button>
     </div>
-    <ol id="log-list" class="log-list" reversed></ol>
-  </section>
+    <div id="log-filter" class="toggle-group" role="group" aria-label="Filtro"></div>
+    <ol id="log-list" class="log-list"></ol>
+  </aside>
 
-  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>

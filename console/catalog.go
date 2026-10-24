@@ -38,6 +38,16 @@ type Manifest struct {
 	Path   string   `yaml:"path" json:"path"`
 	Note   string   `yaml:"note" json:"note,omitempty"`
 	Params []*Param `yaml:"params" json:"params"`
+	// Resources: recursos declarados no arquivo, para a interface mostrar
+	// (kind/nome/namespace). Calculado ao carregar o catálogo.
+	Resources []Resource `yaml:"-" json:"resources"`
+}
+
+type Resource struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace,omitempty"`
 }
 
 // Param aponta para um valor escalar dentro do manifest (doc = índice do
@@ -116,13 +126,11 @@ func loadModule(file string) (*Module, error) {
 			if mf.Params == nil {
 				mf.Params = []*Param{}
 			}
-			if len(mf.Params) == 0 {
-				continue
-			}
 			docs, err := loadDocsFile(filepath.Join(m.Dir, mf.Path))
 			if err != nil {
 				return nil, fmt.Errorf("exercício %d: %w", ei+1, err)
 			}
+			mf.Resources = resources(docs)
 			for _, p := range mf.Params {
 				if p.Type == "" {
 					p.Type = "text"
